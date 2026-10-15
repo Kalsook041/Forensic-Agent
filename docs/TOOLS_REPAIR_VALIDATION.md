@@ -26,6 +26,10 @@
 
 P1：`src/forensic_agent/agent/loop.py` 原纠错异常分支跳过完整性复核。复现：首次 finish 同时含有效 `values[0]` 和无效 `n`；第二请求期间原件或副本变化，随后抛出 JSON/请求异常。旧实现仍提交首次有效子集并标记 completed。两个新增回归用例均在修复前失败（`local-state/review-failed-repair-before.xml`）。已把纠正后的完整性复核移到成功/异常分支共同出口，保持一次纠正上限；原件和副本变化均停止且不提交答案。纠错测试扩展为 10/10 通过（`local-state/review-claim-repair-after.xml`）。离线 wheel、摘要锁与本机安装同步更新。
 
+P2：`scripts/verify-claim-repair.py` 原实时/复用案件验收先计算 passed，再调用会重新检查证据的 generate_report。工作副本变化时，原表达式记录 passed=true/state=completed，但报告已将状态改成 evidence_changed 并清空答案。修复前真实脚本表达式复现见 `local-state/review-livecheck-before.json`。已提取可测试的 case_result，先生成报告，再读取最终状态/答案、核查原件/副本/原始输出完整性，并确认预期工具实际执行。新增 6/6 测试通过（`local-state/review-livecheck-after.xml`），覆盖原件、副本、原始输出变化、答案失效及工具不符。
+
+本次相关完整性回归 24/24 通过（`local-state/review-integrity-regression.xml`），Ruff/差异空白检查通过；27 个 wheel 哈希及 30 个 Python 模块在源码、wheel、本机安装之间一致。新的完整验证脚本使用原真实模型案件各复核一次，未重新调用模型，两项均通过并明确记录 reused_case=true；保存失败案件再次独立重放通过。记录 `local-state/claim-repair-checks/20261015T132700148664Z/results.json`。启动器未改，核对此前 16 项真实检查证据，无新增可操作发现。
+
 上方 119 passed / 2 failed / 1 skipped 是前一轮完整回归记录，保持原样；本次定向通过不代表全套回归通过。
 
 真实模型仅两个题，不能据此保证复杂题可靠性。未做物理断网冷启动、真实内存镜像、完整手机提取、大磁盘深度分析或真实删除恢复验收。TLS 明文仍依赖匹配密钥；partial 标记保持。新工具适配器、分页和资源设计不在此次范围内。
@@ -33,11 +37,11 @@ P1：`src/forensic_agent/agent/loop.py` 原纠错异常分支跳过完整性复�
 ## 复审提示词
 
 ```text
-复审本次工具启动与引用纠错修复。范围：scripts/forensic-tools.ps1、scripts/verify-forensic-tools.py、src/forensic_agent/agent/loop.py、tests/test_claim_repair.py、scripts/verify-claim-repair.py，以及离线 wheel/摘要锁。验收：双 PowerShell 正确转发 -t/-V 和空格路径，保持白名单、哈希、环境恢复与退出码；finish 只能纠正一次、不追加工具调用；首次错误记录不覆盖；来源变化/探索性结果/错误字段值继续被拒绝；安装包与运行源码一致。核对 docs/TOOLS_REPAIR_VALIDATION.md 和已有验证证据，保留全套回归的两项失败，禁止把局部成功描述为全套通过。仅输出可操作发现：P1/P2/P3、文件行号、复现、实际影响、修复验收；无发现明确说明，并列出未验证范围。
+复审本次工具启动与引用纠错修复。范围：scripts/forensic-tools.ps1、scripts/verify-forensic-tools.py、src/forensic_agent/agent/loop.py、tests/test_claim_repair.py、scripts/verify-claim-repair.py、tests/test_claim_repair_validation.py，以及离线 wheel/摘要锁。验收：双 PowerShell 正确转发 -t/-V 和空格路径，保持白名单、哈希、环境恢复与退出码；finish 只能纠正一次、不追加工具调用；首次错误记录不覆盖；来源变化/探索性结果/错误字段值继续被拒绝，尤其覆盖混合有效/无效引用后纠正请求失败时的变化；验证汇总须在报告复核后读取最终状态/答案，变化的副本或原始输出不能误报通过；安装包与运行源码一致。核对 docs/TOOLS_REPAIR_VALIDATION.md 和已有验证证据，保留全套回归的两项失败，禁止把局部成功描述为全套通过。仅输出可操作发现：P1/P2/P3、文件行号、复现、实际影响、修复验收；无发现明确说明，并列出未验证范围。
 ```
 
 ## 修复提示词
 
 ```text
-按本次复审的可操作发现修复；保留一次性纠错预算和严格证据校验，不扩大工具白名单或开放 Shell。本轮功能边界未发现尚未处理的可操作问题，无新复现时保持代码不变。若继续调查既有进程时序测试，先核实子进程启动耗时与树清理，区分测试时序假设和功能缺陷，不通过删除断言、放宽生产边界或反复重跑筛选通过。实施必要定向验证，记录失败，更新离线包/锁与验证文档；每个已验证的修改批次提交并推送 origin/main，不上传案件和本地证据。
+复审新增的 P1（纠正请求异常时跳过完整性复核）和 P2（汇总在报告复核前误报通过）已修复，定向及相关回归通过。后续无新可复现发现时保持代码不变。若发现回归，须保留一次性纠错预算和严格证据校验；异常和成功路径都检查原件/副本，最终验收不能先于报告复核；不扩大工具白名单或开放 Shell。若继续调查既有进程时序测试，先核实子进程启动耗时与树清理，区分测试时序假设和功能缺陷，不通过删除断言、放宽生产边界或反复重跑筛选通过。实施必要定向验证，记录失败，更新离线包/锁与验证文档；每个已验证的修改批次提交并推送 origin/main，不上传案件和本地证据。
 ```
