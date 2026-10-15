@@ -1,10 +1,58 @@
 import sqlite3
 import struct
 import zlib
+import ctypes
+from ctypes import wintypes
+import os
+from types import SimpleNamespace
 
 import pytest
 
 from forensic_agent.settings import Settings, ToolPaths, Limits
+
+
+@pytest.fixture
+def process_tree_probe(tmp_path):
+    """Prove a descendant reached user code, then check its OS exit state."""
+    ready = tmp_path / "child-ready.pid"
+    marker = tmp_path / "child-finished"
+    child = ("import os,time; from pathlib import Path; "
+             f"ready=Path({str(ready)!r}); pending=ready.with_suffix('.tmp'); "
+             "pending.write_text(str(os.getpid())); pending.replace(ready); "
+             f"time.sleep(30); Path({str(marker)!r}).touch()")
+
+    def script(root_waits, gated=False):
+        return ("import sys,subprocess,time; from pathlib import Path; "
+                + ("sys.stdin.readline(); " if gated else "")
+                + f"subprocess.Popen([sys.executable,'-I','-c',{child!r}]); "
+                + f"ready=Path({str(ready)!r})\n"
+                + "deadline=time.monotonic()+5\n"
+                + "while not ready.exists() and time.monotonic()<deadline: time.sleep(0.01)\n"
+                + "assert ready.exists(), 'child never became ready'\n"
+                + "print('started',flush=True)\n"
+                + ("time.sleep(30)" if root_waits else "sys.exit(0)"))
+
+    def assert_stopped():
+        assert os.name == "nt"
+        assert ready.is_file(), "The test must exercise an actually started descendant"
+        child_pid = int(ready.read_text())
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x00100000, False, child_pid)  # SYNCHRONIZE
+        if not handle:
+            # ERROR_INVALID_PARAMETER means the process no longer exists.
+            assert ctypes.get_last_error() == 87, "Could not verify the descendant's exit"
+        else:
+            try:
+                assert kernel.WaitForSingleObject(handle, 1000) == 0, "Descendant survived Job cleanup"
+            finally:
+                kernel.CloseHandle(handle)
+        assert not marker.exists()
+
+    return SimpleNamespace(script=script, assert_stopped=assert_stopped, child_script=child, ready=ready)
 
 
 @pytest.fixture

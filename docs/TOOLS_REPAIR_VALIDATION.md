@@ -1,5 +1,7 @@
 # 2026-10-15 可用性复审修复
 
+最新进程时序修复验收见 [PROCESS_TIMING_REPAIR.md](PROCESS_TIMING_REPAIR.md)：本轮完整回归 131 passed / 1 skipped / 0 failed，最终补强的进程定向检查 9 passed。下文 119 passed / 2 failed / 1 skipped 为保留的历史记录；两项测试时序问题现已通过测试修复处理，生产超时边界未改。
+
 范围仅包含工具启动器原生参数转发、Agent finish 引用的一次纠正，以及必要验证和离线安装包同步。新工具仍未接入 Agent 自动分析。
 
 ## 改动与验收

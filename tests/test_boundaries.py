@@ -15,20 +15,33 @@ from forensic_agent.tools.process import WindowsJob, capture, clean_environment
 from forensic_agent.tools.runner import run_tool
 
 
-def test_timeout_kills_process_tree(tmp_path, settings):
-    marker = tmp_path / "must-not-exist"
-    child = "import time; from pathlib import Path; time.sleep(1); Path(" + repr(str(marker)) + ").write_text('bad')"
-    script = "import sys,subprocess,time; sys.stdin.readline(); subprocess.Popen([sys.executable,'-c'," + repr(child) + "]); print('started',flush=True); time.sleep(10)"
+def test_timeout_kills_process_tree(tmp_path, settings, process_tree_probe):
+    script = process_tree_probe.script(root_waits=True, gated=True)
     job = WindowsJob(settings.limits)
+    start = time.monotonic()
     try:
         result = capture([sys.executable, "-I", "-c", script], cwd=tmp_path, env=clean_environment(tmp_path),
-                         timeout=.25, max_output=1024, input_bytes=b"go\n", job=job)
+                         timeout=2, max_output=1024, input_bytes=b"go\n", job=job)
+        assert time.monotonic() - start < 3
         assert result.stopped == "timeout"
         assert b"started" in result.stdout
+        process_tree_probe.assert_stopped()
     finally:
         job.close()
-    time.sleep(1.1)
-    assert not marker.exists()
+
+
+def test_short_deadline_includes_startup(tmp_path, settings):
+    # A short total budget may expire before user code starts; it must still stop.
+    job = WindowsJob(settings.limits)
+    start = time.monotonic()
+    try:
+        result = capture([sys.executable, "-I", "-c", "import time; time.sleep(30)"],
+                         cwd=tmp_path, env=clean_environment(tmp_path), timeout=.25,
+                         max_output=1024, job=job)
+        assert result.stopped == "timeout"
+        assert time.monotonic() - start < 3
+    finally:
+        job.close()
 
 
 def test_output_limit(tmp_path, settings):

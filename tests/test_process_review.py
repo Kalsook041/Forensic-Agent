@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import time
+import subprocess
 
 import pytest
 
@@ -34,19 +35,32 @@ def test_normal_output_input_and_nonzero(tmp_path):
 
 
 @pytest.mark.parametrize("root_waits", [False, True])
-def test_descendant_holding_pipes_is_killed(tmp_path, root_waits):
-    marker = tmp_path / "descendant-finished"
-    child = f"import time; from pathlib import Path; time.sleep(2); Path({str(marker)!r}).touch()"
-    script = (f"import subprocess, sys, time; subprocess.Popen([sys.executable, '-I', '-c', {child!r}]); "
-              + ("time.sleep(30)" if root_waits else "sys.exit(0)"))
+def test_descendant_holding_pipes_is_killed(tmp_path, root_waits, process_tree_probe):
+    script = process_tree_probe.script(root_waits)
     before_threads = set(threading.enumerate())
     start = time.monotonic()
-    result = run_capture(tmp_path, script, timeout=0.5)
+    result = run_capture(tmp_path, script, timeout=2)
     assert time.monotonic() - start < 3
     assert result.stopped == ("timeout" if root_waits else None)
+    assert b"started" in result.stdout
     assert set(threading.enumerate()) <= before_threads
-    time.sleep(2.1)
-    assert not marker.exists()
+    process_tree_probe.assert_stopped()
+
+
+def test_descendant_probe_detects_live_process(process_tree_probe):
+    child = subprocess.Popen([sys.executable, "-I", "-c", process_tree_probe.child_script],
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+    try:
+        deadline = time.monotonic() + 5
+        while not process_tree_probe.ready.exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert process_tree_probe.ready.exists()
+        with pytest.raises(AssertionError, match="Descendant survived"):
+            process_tree_probe.assert_stopped()
+    finally:
+        child.terminate()
+        child.wait(timeout=5)
+    process_tree_probe.assert_stopped()
 
 
 def test_assignment_failure_never_launches_target(tmp_path, monkeypatch):
