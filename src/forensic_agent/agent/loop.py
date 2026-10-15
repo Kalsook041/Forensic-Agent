@@ -239,9 +239,6 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                     try:
                         repaired, repair_raw = client.decide(repair_messages)
                         write_json(repair_path, {"messages": repair_messages, "response": repair_raw})
-                        # The source can change during the second model request too.
-                        if case.record_integrity("model_finish_repair")["issues"]:
-                            break
                         if repaired.action == "finish":
                             decision = repaired
                             answers, errors = validate_claims(case, decision.claims)
@@ -252,6 +249,10 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                                    {"messages": repair_messages, "error": str(exc)[:4000],
                                     "response": getattr(client, "last_response", None)})
                         errors = [f"引用纠正失败：{type(exc).__name__}: {exc}"]
+                    # Check every outcome, including a timeout or malformed correction.
+                    # Even previously valid claims must not survive a changed source.
+                    if case.record_integrity("model_finish_repair")["issues"]:
+                        break
                 case.manifest["answers"] = answers
                 case.manifest["warnings"].extend([*errors, *decision.uncertainties])
                 if not answers:

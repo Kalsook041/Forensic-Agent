@@ -85,3 +85,19 @@ def test_changed_source_never_accepted(evidence, settings, during_repair):
     assert case.manifest["state"] == "evidence_changed"
     assert not case.manifest["answers"]
     assert client.calls == (2 if during_repair else 1)
+
+
+@pytest.mark.parametrize("changed_copy", [False, True])
+def test_changed_source_during_failed_repair_discards_valid_subset(evidence, settings, changed_copy):
+    case = count_case(evidence, settings)
+    mixed = finish("values[0]")
+    mixed.claims.append(Claim(evidence_id="step0001:r00001", field="n", value=3))
+    target = (case.directory / "snapshots/root/记录.sqlite") if changed_copy else evidence / "记录.sqlite"
+    def mutate():
+        with target.open("ab") as stream:
+            stream.write(b"changed during failed correction")
+    client = FinishClient([mixed, ValueError("invalid correction JSON")], mutate)
+    analyze(case, client=client)
+    assert client.calls == 2
+    assert case.manifest["state"] == "evidence_changed"
+    assert not case.manifest["answers"]
