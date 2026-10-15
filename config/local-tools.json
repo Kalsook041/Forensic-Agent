@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "configured_on": "2026-10-15",
+  "tools": {
+    "volatility3": {
+      "version": "2.28.2",
+      "executable": "E:\\Forensics\\Volatility3\\venv\\Scripts\\vol.exe",
+      "sha256": "62053a721acac06559236900c5ffcc1c6bdddc28a7ddb99477f460eb90152502",
+      "source": "https://github.com/volatilityfoundation/volatility3",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": [
+        "--offline",
+        "--cache-path",
+        "E:\\Forensics\\Volatility3\\cache",
+        "--symbol-dirs",
+        "E:\\Forensics\\Volatility3\\symbols"
+      ]
+    },
+    "mmls": {
+      "version": "4.14.0",
+      "executable": "E:\\Forensics\\SleuthKit\\4.14.0\\sleuthkit-4.14.0-win32\\bin\\mmls.exe",
+      "sha256": "1d78fb4b0b3140102aeec4464938fdf94fa848e87d5ad530a6955332f15f2800",
+      "source": "https://www.sleuthkit.org/sleuthkit/download.php",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "fls": {
+      "version": "4.14.0",
+      "executable": "E:\\Forensics\\SleuthKit\\4.14.0\\sleuthkit-4.14.0-win32\\bin\\fls.exe",
+      "sha256": "5287150c4e454f131e62923e091860e50df602e504f754ca94408c12ec8f8bbe",
+      "source": "https://www.sleuthkit.org/sleuthkit/download.php",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "icat": {
+      "version": "4.14.0",
+      "executable": "E:\\Forensics\\SleuthKit\\4.14.0\\sleuthkit-4.14.0-win32\\bin\\icat.exe",
+      "sha256": "44a562b204274b5cbe70e0afa7070553617a82fde72970a38972f22f3c7e3079",
+      "source": "https://www.sleuthkit.org/sleuthkit/download.php",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "tsk_recover": {
+      "version": "4.14.0",
+      "executable": "E:\\Forensics\\SleuthKit\\4.14.0\\sleuthkit-4.14.0-win32\\bin\\tsk_recover.exe",
+      "sha256": "c857dfe57efaac4b213bf05203c8ab1fe96fd066a52f7099b81eb1f61d681e01",
+      "source": "https://www.sleuthkit.org/sleuthkit/download.php",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "img_stat": {
+      "version": "4.14.0",
+      "executable": "E:\\Forensics\\SleuthKit\\4.14.0\\sleuthkit-4.14.0-win32\\bin\\img_stat.exe",
+      "sha256": "17e777d15292769d07e20c21dd0314606d7c1b260569c06e6252a7fdfccc035c",
+      "source": "https://www.sleuthkit.org/sleuthkit/download.php",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "photorec": {
+      "version": "7.2",
+      "executable": "E:\\Forensics\\TestDisk\\7.2\\testdisk-7.2\\photorec_win.exe",
+      "sha256": "d75b9a6ff60f91479085a578aca518abb1cd7405f24506a61afa2f7e222147bf",
+      "source": "https://www.cgsecurity.org/wiki/TestDisk_Download",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": [],
+      "environment": {
+        "__COMPAT_LAYER": "RunAsInvoker"
+      },
+      "scope": "Ordinary-user image-file processing; no physical-disk privileges granted."
+    },
+    "testdisk": {
+      "version": "7.2",
+      "executable": "E:\\Forensics\\TestDisk\\7.2\\testdisk-7.2\\testdisk_win.exe",
+      "sha256": "025ea8936765169966fe497b8c46bd5ad16b98b189ee90d6854f063200c95f0c",
+      "source": "https://www.cgsecurity.org/wiki/TestDisk_Download",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": [],
+      "environment": {
+        "__COMPAT_LAYER": "RunAsInvoker"
+      },
+      "scope": "Ordinary-user image-file processing; no physical-disk privileges granted."
+    },
+    "aleapp": {
+      "version": "2026.4.3",
+      "executable": "E:\\Forensics\\ALEAPP\\2026.4.3\\aleapp.exe",
+      "sha256": "e9c8aca3c0ca577dbbfedc93948a3e8c55cd87bbf7103bf59644d89063f5efe3",
+      "source": "https://github.com/abrignoni/ALEAPP/releases/tag/v2026.4.3",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "ileapp": {
+      "version": "2026.4.4",
+      "executable": "E:\\Forensics\\iLEAPP\\2026.4.4\\ileapp.exe",
+      "sha256": "b7cc41f36316bca348703bf18080b848b7fe1a0f94fcb20511bbd4566abb715e",
+      "source": "https://github.com/abrignoni/iLEAPP/releases/tag/v2026.4.4",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "autopsy": {
+      "version": "4.23.1",
+      "executable": "E:\\Forensics\\Autopsy\\4.23.1\\bin\\autopsy64.exe",
+      "sha256": "ee790adfcf8436d7b128ddb43d6f6df1a8404df7612972b2bef7022b4f27bf69",
+      "source": "https://www.autopsy.com/download/",
+      "agent_adapter": false,
+      "kind": "gui",
+      "arguments": [
+        "--userdir",
+        "E:\\Forensics\\AutopsyData\\userdir",
+        "--cachedir",
+        "E:\\Forensics\\AutopsyData\\cache",
+        "-J-Xmx4g"
+      ]
+    },
+    "pecmd": {
+      "version": "2026.5.0",
+      "executable": "E:\\Forensics\\EZTools\\net9\\PECmd.exe",
+      "sha256": "8ef7357917c363641af503c95ae63cf132a717e0bb86748ae01ee2584c517cbe",
+      "source": "https://ericzimmerman.github.io/",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "mftecmd": {
+      "version": "2026.5.0",
+      "executable": "E:\\Forensics\\EZTools\\net9\\MFTECmd.exe",
+      "sha256": "2f0251ff15e5c3559967523661e2bb77dc4a1cbc7ae56aa146c9c65270a517f6",
+      "source": "https://ericzimmerman.github.io/",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "recmd": {
+      "version": "2026.5.0",
+      "executable": "E:\\Forensics\\EZTools\\net9\\RECmd\\RECmd.exe",
+      "sha256": "89b1ff3ad30d79bf919f5bfefa755b25cc067815e8e11052c2d52392122c0387",
+      "source": "https://ericzimmerman.github.io/",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    },
+    "sqlecmd": {
+      "version": "2026.5.0",
+      "executable": "E:\\Forensics\\EZTools\\net9\\SQLECmd\\SQLECmd.exe",
+      "sha256": "e968f16258a073a6cde36041b828d5c798eba6eef8656e3ed851a60deca51696",
+      "source": "https://ericzimmerman.github.io/",
+      "agent_adapter": false,
+      "kind": "cli",
+      "arguments": []
+    }
+  },
+  "symbols": {
+    "path": "E:/Forensics/Volatility3/windows-symbols.zip",
+    "sha256": "231d69735b9a5482b16bdbf1ec356e0a95574c44079e68dfb02ebddb34d55f3e",
+    "coverage": "Official Windows pack; a specific image may require additional matching symbols.",
+    "directory": "E:/Forensics/Volatility3/symbols"
+  },
+  "validation_directory": "E:\\Forensics\\Validation\\20261015",
+  "download_manifest": "E:\\Forensics\\Downloads\\20261015\\download-manifest.json"
+}

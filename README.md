@@ -52,3 +52,5 @@ Python 包以外的工具、Ollama 和模型须提前准备。安装脚本不会
 ```
 
 更多适配器开发说明见 [`docs/ADAPTERS.md`](docs/ADAPTERS.md)，验证记录见 [`docs/VALIDATION.md`](docs/VALIDATION.md)。
+
+本机新增取证软件的安装位置、统一启动方法与验证边界见 [`docs/TOOLS_SETUP.md`](docs/TOOLS_SETUP.md)。在项目目录运行 `.\scripts\forensic-tools.ps1 list` 查看配置清单；软件安装状态与 Agent 分析适配器状态分别显示。
