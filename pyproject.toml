@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forensic-agent"
+version = "0.1.1"
+description = "Offline, evidence-first Windows forensic competition assistant"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.10,<3", "httpx>=0.28,<1", "charset-normalizer>=3.4,<4",
+  "python-evtx>=0.8,<1", "defusedxml>=0.7,<1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.11,<1", "build>=1,<2"]
+
+[project.scripts]
+forensic-agent = "forensic_agent.cli:main"
+
+[project.gui-scripts]
+forensic-agent-gui = "forensic_agent.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+forensic_agent = ["web/*.html", "web/*.css", "web/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

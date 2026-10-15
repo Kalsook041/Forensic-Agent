@@ -1,0 +1,162 @@
+import json
+import threading
+import time
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+import pytest
+
+from forensic_agent.gui import BusyError, LocalServer, Workspace
+
+
+@pytest.fixture
+def workspace(tmp_path):
+    config = tmp_path / "gui.toml"
+    config.write_text(f"work_dir = {json.dumps(str(tmp_path / 'cases'))}\n"
+                      "[limits]\nreserve_disk_bytes = 0\n", encoding="utf-8")
+    return Workspace(config)
+
+
+@pytest.fixture
+def server(workspace):
+    app = LocalServer(workspace)
+    thread = threading.Thread(target=app.serve_forever, daemon=True)
+    thread.start()
+    yield app
+    app.shutdown()
+    app.server_close()
+    thread.join(timeout=5)
+    if workspace.worker:
+        workspace.worker.join(timeout=30)
+
+
+def request(server, path, data=None, headers=None):
+    hdrs = {"X-Session-Token": server.workspace.token, **(headers or {})}
+    if data is not None:
+        hdrs["Content-Type"] = "application/json"
+    req = Request(server.origin + path, data=json.dumps(data).encode() if data is not None else None,
+                  headers=hdrs)
+    return urlopen(req, timeout=10)
+
+
+def test_page_assets_and_bootstrap(server):
+    with request(server, "/") as response:
+        html = response.read().decode()
+        assert server.workspace.token in html
+        assert "__SESSION_TOKEN__" not in html
+        assert "895069c8" in html
+        assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+    for path in ("/app.js", "/app.css"):
+        with request(server, path) as response:
+            assert response.status == 200
+    with request(server, "/api/bootstrap") as response:
+        data = json.load(response)
+        assert "search" in data["tools"] and data["max_question"] == 1000
+
+
+@pytest.mark.parametrize("headers", [
+    {"X-Session-Token": "wrong"}, {"Origin": "https://example.com"},
+    {"Host": "evil.example"}, {"Sec-Fetch-Site": "cross-site"},
+])
+def test_reject_foreign_session_and_origin(server, headers):
+    with pytest.raises(HTTPError) as error:
+        request(server, "/api/start", {"action": "doctor"}, headers)
+    assert error.value.code == 403
+    assert server.workspace.snapshot() is None
+
+
+def test_static_traversal_and_unauthenticated_read(server):
+    for path, headers, status in [("/../config/default.toml", {}, 404),
+                                   ("/api/bootstrap", {"X-Session-Token": ""}, 403),
+                                   ("/api/report?case=..", {}, 400)]:
+        with pytest.raises(HTTPError) as error:
+            request(server, path, headers=headers)
+        assert error.value.code == status
+
+
+def test_validation_before_case_creation(workspace, tmp_path):
+    evidence = tmp_path / "线索.txt"
+    evidence.write_text("FLAG", encoding="utf-8")
+    for change in [{"question": ""}, {"question": "题" * 1001}, {"mode": "remote"},
+                   {"evidence": str(tmp_path / "missing")}, {"evidence": str(tmp_path)}]:
+        data = {"action": "analyze", "evidence": str(evidence), "question": "搜索关键词 FLAG", **change}
+        with pytest.raises((ValueError, OSError)):
+            workspace.start(data)
+    assert workspace.task is None
+    assert not workspace.settings.work_dir.exists()
+    with pytest.raises(ValueError):
+        workspace.command({"action": "tool", "evidence": str(evidence), "tool_id": "shell", "params": {}})
+
+
+def test_real_rules_analysis_report_and_repeat_guard(server, tmp_path):
+    evidence = tmp_path / "中文检材.txt"
+    evidence.write_text("第一行\nFLAG-GUI-2026\n", encoding="utf-8")
+    original = evidence.read_bytes()
+    with request(server, "/api/start", {"action": "analyze", "mode": "rules",
+                                       "evidence": str(evidence), "question": '搜索关键词 "FLAG"'}) as response:
+        assert response.status == 202
+        assert json.load(response)["task"]["status"] == "running"
+    with pytest.raises(BusyError):
+        server.workspace.start({"action": "doctor"})
+    with pytest.raises(HTTPError) as error:
+        request(server, "/api/shutdown", {})
+    assert error.value.code == 409
+    deadline = time.monotonic() + 40
+    while time.monotonic() < deadline:
+        with request(server, "/api/task") as response:
+            task = json.load(response)["task"]
+        if task["status"] != "running":
+            break
+        time.sleep(.1)
+    assert task["status"] == "completed", task
+    assert task["result"]["state"] == "completed_without_model"
+    assert any("search" in line for line in task["logs"])
+    with request(server, "/api/report?case=" + task["case"]) as response:
+        report = json.load(response)
+    assert "FLAG-GUI-2026" in report["text"]
+    assert evidence.read_bytes() == original
+    case = server.workspace.case_path(task["case"])
+    assert (case / "case.json").is_file()
+    with request(server, "/api/cases") as response:
+        assert json.load(response)["cases"][0]["id"] == task["case"]
+    # Rechecking an existing report detects changed evidence; the GUI preserves the CLI failure.
+    evidence.write_text("changed", encoding="utf-8")
+    server.workspace.start({"action": "report", "case": task["case"]})
+    server.workspace.worker.join(timeout=20)
+    state = server.workspace.snapshot()
+    assert state["status"] == "failed"
+    assert state["exit_code"] == 2
+    assert state["case"] == task["case"]
+    assert json.loads((case / "case.json").read_text(encoding="utf-8"))["state"] == "evidence_changed"
+
+
+def test_direct_tool_args_preserve_chinese_and_json(workspace, tmp_path):
+    evidence = tmp_path / "中文.txt"
+    evidence.write_text("hello", encoding="utf-8")
+    args = workspace.command({"action": "tool", "evidence": str(evidence), "tool_id": "search",
+                              "params": {"keyword": '中文 "值"'}})
+    assert json.loads(args[-1]) == {"keyword": '中文 "值"'}
+    assert str(evidence) in args
+
+
+def test_malformed_body(server):
+    req = Request(server.origin + "/api/start", data=b"[]", headers={
+        "X-Session-Token": server.workspace.token, "Content-Type": "application/json"})
+    with pytest.raises(HTTPError) as error:
+        urlopen(req, timeout=5)
+    assert error.value.code == 400
+
+
+def test_saved_report_does_not_follow_symlink(workspace, tmp_path):
+    root = workspace.settings.work_dir
+    case = root / "case-1"
+    case.mkdir(parents=True)
+    (case / "case.json").write_text("{}", encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("private", encoding="utf-8")
+    try:
+        (case / "report.md").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation requires Windows developer mode or permission")
+    with pytest.raises(ValueError):
+        workspace.report("case-1")

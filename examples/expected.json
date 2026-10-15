@@ -1,0 +1,21 @@
+{
+  "kind": "synthetic_training_samples",
+  "text_line": 2,
+  "text_value": "FLAG-TEXT-2026",
+  "metadata_author": "Forensic Fixture",
+  "sqlite_count": 3,
+  "dns_frame": 1,
+  "dns_name": "contest.test",
+  "http_frame": 2,
+  "http_uri": "/flag?value=FLAG-PCAP",
+  "sha256": {
+    "DNS_HTTP.pcap": "853fe4ad97995377c7da6f2eb3d595a2bf1cc1283f1ed9a1337fcaca889987c9",
+    "GB18030.txt": "2ac6981068b1d25c963248496723f7c18605002b2ca461af1233b321fa8231d1",
+    "UTF16.txt": "8d27d292b5567164fea15ef13ac6e867d87f94317bc0d9c4ccfb66b5fd5b3e63",
+    "作者图片.png": "3a6b6d8ffc21dd34123dfad4f63826eb711bb0ac4259b6a85706222343d77476",
+    "单文件.txt.gz": "9dca083a751c1e8a25863dc89f18c85796e945766277c762e7ad2ef4327746ff",
+    "安全压缩包.zip": "f387063f2311a554b6d77e6caf2b9f35e61bc5748458f36d9a0826fcf7169d8b",
+    "线索.txt": "da54c63b3a181cf30416ffd161492abf952132bd9564b6c92bd764f03064fd8a",
+    "聊天记录.sqlite": "854e737e89226c0d91d0c060e1d24ed5d66c5d97da76847486627d2da173bec3"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "downloadedUtc": "2026-10-15T05:38:47.4440042Z",
+  "sha256": "CCB83CFEFC9038017224CD97B800B66E248FE14529649DDF47907E5A2021449E",
+  "license": "python-evtx-LICENSE.txt",
+  "source": "https://github.com/williballenthin/python-evtx/blob/master/tests/data/system.evtx"
+}

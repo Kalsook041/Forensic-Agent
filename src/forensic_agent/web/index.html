@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="session-token" content="__SESSION_TOKEN__">
+  <title>Forensic Agent · 取证工作台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<!-- THESIS: One evidence path, one question, one automatic investigation.
+OWN-WORLD: Cool white, slate, indigo; outlined controls, precise rules and a quiet working canvas.
+STORY: Choose evidence, state the question, run one investigation, read and keep its report.
+FIRST VIEWPORT: A centered single-column form; only evidence and question are required. Results open below on use.
+FORM: Existing laboratory bench simplified on user request; seed 895069c8 retained as provenance.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+-->
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Forensic Agent 首页">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 4h15l7 7v17H5zM20 4v8h7M10 17h12M10 22h8"/></svg>
+    <span>Forensic Agent<small>本地取证工作台</small></span>
+  </a>
+  <div class="top-actions"><span class="local-badge"><i></i>仅本机 · 离线可用</span><button id="shutdown" class="quiet">退出服务</button></div>
+</header>
+<main>
+  <div class="page-heading"><div><h1>把题目交给 Agent</h1><p>选择检材，粘贴题目。Agent 自动选择工具，查找证据并生成报告。</p></div></div>
+  <div id="notice" role="alert" hidden></div>
+  <div id="connection-notice" role="alert" hidden></div>
+  <div class="workbench">
+    <section class="intake" aria-labelledby="intake-title">
+      <h2 id="intake-title" class="sr-only">题目分析</h2>
+      <form id="analysis-form">
+        <fieldset id="input-fields" disabled>
+          <div class="field evidence-field"><label for="evidence">检材文件或文件夹</label>
+            <input id="evidence" name="evidence" placeholder="选择文件、文件夹，或粘贴绝对路径" autocomplete="off" required aria-describedby="evidence-help">
+            <div class="file-actions"><button type="button" class="secondary" id="pick-file"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 2h8l4 4v12H4zM12 2v5h4"/></svg>选择文件</button><button type="button" class="secondary" id="pick-directory"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h6l2 2h8v10H2zM2 5V3h6l2 2"/></svg>选择文件夹</button></div>
+            <p class="help" id="evidence-help">会先创建副本并核对 SHA256，解析工具读取副本。</p>
+          </div>
+          <div id="analysis-fields">
+            <div class="field"><div class="label-row"><label for="question">题目详情</label><span id="question-count">0 / 1000</span></div>
+              <textarea id="question" name="question" rows="7" placeholder="直接粘贴题目原文，也可补充：&#10;检材背景：设备、系统、已知线索&#10;时间范围与时区：&#10;需要回答的问题和答案格式：&#10;已经尝试过的步骤（可选）：" required aria-describedby="question-help"></textarea>
+              <p class="help" id="question-help">一次聚焦一个问题，最多 1000 字符。结论会保留证据位置，方便复核。</p>
+            </div>
+          </div>
+          <div class="submit-row"><p class="help" id="model-name">本地模型自动选择工具</p><button id="start" class="primary" type="submit"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 9 6-9 6z"/></svg><span>开始分析</span></button></div>
+          <button id="sample" type="button" class="text-button">填入合成示例</button>
+          <details class="advanced" id="advanced"><summary>高级选项</summary>
+            <div class="field"><label for="execution-mode">执行方式</label><select id="execution-mode"><option value="model" selected>自动选择工具（本地模型）</option><option value="rules">基础规则（无需模型）</option><option value="tool">手动指定工具</option></select></div>
+            <div id="tool-fields" hidden>
+              <div class="field"><label for="tool-id">白名单工具</label><select id="tool-id"></select><p class="help" id="tool-description"></p></div>
+              <div class="field"><label for="tool-params">工具参数 <span class="optional">JSON</span></label><textarea id="tool-params" rows="5" spellcheck="false">{}</textarea><details class="params-help"><summary>查看此工具的参数说明</summary><pre id="tool-schema"></pre></details></div>
+            </div>
+            <div class="utilities"><div><h3>环境检查</h3><p>检查工具与本地模型是否就绪。</p></div><button type="button" class="secondary" id="doctor" disabled>检查环境</button></div>
+            <p class="help workspace-label" id="workdir">正在连接本地服务…</p>
+          </details>
+        </fieldset>
+      </form>
+      <details class="history"><summary>历史案件 <span id="case-count">0</span></summary><p class="help">打开已保存的报告；可在报告上方重新核验。</p><div id="case-list"><p class="help">尚无案件。完成一次分析后会显示在这里。</p></div></details>
+    </section>
+    <section class="output" id="output" aria-labelledby="output-title" hidden>
+      <div class="output-toolbar"><h2 id="output-title">分析结果</h2><span id="task-status" class="status" role="status">等待开始</span></div>
+      <div class="report-actions" id="report-actions" hidden><button id="verify" class="secondary">重新核验并生成报告</button><button id="download" class="quiet">保存报告</button></div>
+      <div class="output-body" id="output-body">
+        <div class="empty-state" id="empty-state">
+          <p>开始分析后，这里会显示进度与报告。</p>
+        </div>
+        <div id="running-state" class="running-state" hidden><span class="spinner" aria-hidden="true"></span><div><h3>正在处理检材</h3><p>页面会自动更新。复制大文件或等待本地模型时可能需要较长时间。</p></div></div>
+        <p id="report-meta" class="report-meta" hidden></p>
+        <article id="report" class="report" aria-label="取证报告" hidden></article>
+        <pre id="diagnostics" class="diagnostics" hidden></pre>
+      </div>
+      <details id="progress-panel" class="progress-panel" open><summary>运行记录 <span id="log-count">尚无记录</span></summary><ol id="logs"><li class="muted">开始分析后，这里会显示实际执行的步骤。</li></ol></details>
+    </section>
+  </div>
+  <footer><span>模型解释是候选结论，请结合原始工具输出人工复核。</span><span>关闭页面后，正在运行的任务仍会继续。</span></footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,36 @@
+work_dir = 'E:\ForensicWork'
+
+[model]
+base_url = "http://127.0.0.1:11434"
+name = "qwen3.5:4b"
+num_ctx = 4096
+num_predict = 1536
+timeout_seconds = 120
+max_steps = 8
+
+[tools]
+tshark = 'E:\Wireshark\tshark.exe'
+capinfos = 'E:\Wireshark\capinfos.exe'
+exiftool = 'E:\exiftool-13.59_64\exiftool.exe'
+seven_zip = 'C:\Program Files\7-Zip\7z.exe'
+ollama = 'E:\Ollama\app\ollama.exe'
+evtxecmd = 'E:\Forensics\EZTools\net9\EvtxeCmd\EvtxECmd.exe'
+pecmd = 'E:\Forensics\EZTools\net9\PECmd.exe'
+mftecmd = 'E:\Forensics\EZTools\net9\MFTECmd.exe'
+recmd = 'E:\Forensics\EZTools\net9\RECmd\RECmd.exe'
+sqlecmd = 'E:\Forensics\EZTools\net9\SQLECmd\SQLECmd.exe'
+
+[limits]
+timeout_seconds = 60
+pcap_timeout_seconds = 180
+memory_bytes = 2147483648
+cpu_percent = 50
+output_bytes = 16777216
+max_files = 10000
+snapshot_bytes = 10737418240
+text_file_bytes = 67108864
+archive_member_bytes = 536870912
+archive_total_bytes = 2147483648
+archive_members = 10000
+archive_ratio = 200
+reserve_disk_bytes = 1073741824
