@@ -224,6 +224,34 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                 if case.record_integrity("model_finish")["issues"]:
                     break
                 answers, errors = validate_claims(case, decision.claims)
+                # A finish correction has its own one-shot budget, independent of tool steps.
+                # Keep the original rejection and response as audit evidence.
+                if errors:
+                    case.manifest["warnings"].extend(errors)
+                    feedback = {"validation_errors": errors[:8], "instruction":
+                        "引用校验失败。仅允许一次纠正：返回action=finish，核对已有observations中的证据ID、"
+                        "data字段及原值。SQL列名不是data字段；例如data.values=[3]应引用values[0]。"
+                        "不允许新工具调用；不能证实的claim请删除。"}
+                    repair_messages = [*messages, {"role": "user", "content": json.dumps(feedback, ensure_ascii=False)}]
+                    repair_path = case.directory / f"model-{len(case.manifest['steps']) + 1:03d}-claim-repair.json"
+                    if progress:
+                        progress("证据引用未通过校验，允许一次纠正")
+                    try:
+                        repaired, repair_raw = client.decide(repair_messages)
+                        write_json(repair_path, {"messages": repair_messages, "response": repair_raw})
+                        # The source can change during the second model request too.
+                        if case.record_integrity("model_finish_repair")["issues"]:
+                            break
+                        if repaired.action == "finish":
+                            decision = repaired
+                            answers, errors = validate_claims(case, decision.claims)
+                        else:
+                            errors = ["引用纠正只允许 finish；未执行额外工具调用"]
+                    except Exception as exc:
+                        write_json(repair_path.with_name(repair_path.stem + "-failed.json"),
+                                   {"messages": repair_messages, "error": str(exc)[:4000],
+                                    "response": getattr(client, "last_response", None)})
+                        errors = [f"引用纠正失败：{type(exc).__name__}: {exc}"]
                 case.manifest["answers"] = answers
                 case.manifest["warnings"].extend([*errors, *decision.uncertainties])
                 if not answers:
