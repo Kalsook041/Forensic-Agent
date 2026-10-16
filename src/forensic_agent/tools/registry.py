@@ -24,7 +24,7 @@ REGISTRY = {
                       basic.sqlite_query, model_params=ModelSQLiteParams),
     "evidence_window": Adapter("按证据ID和字段读取有界原文窗口，start为字符偏移", EvidenceWindowParams, basic.evidence_window),
     "archive": Adapter("ZIP/TAR/GZIP 列表和受控解包，7z/RAR 仅列表", ArchiveParams, archives.archive),
-    "pcap": Adapter("离线 PCAP/PCAPNG DNS、HTTP、TLS 和基础帧分析", PcapParams, structured.pcap, "tshark"),
+    "pcap": Adapter("离线 PCAP 全量IP/会话统计、IP/流筛选、分页及DNS/HTTP/TLS字段", PcapParams, structured.pcap, "tshark"),
     "evtx": Adapter("离线 Windows EVTX 事件解析", EvtxParams, structured.evtx),
     "evtxecmd": Adapter("使用本机 EZTools EvtxECmd 离线导出与查询 EVTX", EvtxParams, structured.evtxecmd, "evtxecmd"),
 }

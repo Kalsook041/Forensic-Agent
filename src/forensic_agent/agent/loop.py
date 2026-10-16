@@ -5,7 +5,7 @@ import re
 from ..evidence.store import write_json
 from ..evidence.values import evidence_value, supports_answer
 from ..models import MAX_QUESTION_CHARS, ToolRequest
-from ..tools.registry import catalog
+from ..tools.registry import catalog, validate_request
 from ..tools.runner import run_tool
 from .ollama import OllamaClient
 
@@ -41,6 +41,17 @@ def validate_claims(case, claims):
     return accepted, errors
 
 
+def request_signature(request):
+    """Compare effective parameters, while leaving blocked requests to runner audit."""
+    try:
+        _, params = validate_request(request)
+        effective = params.model_dump(mode="json")
+    except ValueError:
+        effective = request.params
+    return json.dumps({"tool_id": request.tool_id, "source_id": request.source_id,
+                       "params": effective}, sort_keys=True, ensure_ascii=False)
+
+
 def compact_messages(case):
     available = catalog(case.settings, for_model=True)
     specs = {}
@@ -74,13 +85,24 @@ def compact_messages(case):
               '回答示例：{"plan":[],"action":"finish","request":null,"claims":[{"evidence_id":'
               '"step0001:r00001","field":"text","value":"工具原文","interpretation":""}],"uncertainties":[]}。'
               "不要把inventory中的文件哈希当作关键词命中证据。工具：" + json.dumps(specs, ensure_ascii=False)
+              + "\n已有证据足以回答时应finish，不要重复获取相同概览。PCAP概览的摘要位于首条记录，"
+              "ip_addresses是地址列表、tcp_session_count是会话数；直接引用实际字段原值，不能把tcp.stream编号当会话数量。"
+              "statistics_complete=true表示本次筛选范围内统计完整，即使帧明细分页使status=partial，摘要仍可引用。"
+              "完整IP列表还要求ip_addresses_complete=true；有IP或流筛选的统计不能冒充整个文件。"
+              "tcp_statistics_complete=false或tcp_session_count=null时会话总数未知，不得把observed计数当完整总数。"
+              "需要更多帧时用next_offset翻页或用ip_address/tcp_stream定向筛选，不能重复相同页。"
               + "\n本地参考流程：" + workflow)
     sources = [{"id": item.id, "name": Path(item.original_path or item.member or item.working_path).name[:100],
                 "kind": item.kind} for item in list(case.sources.values())[:20]]
     observations = []
     for step in case.manifest["steps"][-3:]:
         rows = []
-        for row in step["evidence"][:8]:
+        # Overview already includes complete aggregates. Repeating similar frame rows
+        # can fill a 4096-token context and make Ollama drop the question/summary.
+        # Keep one frame for orientation; all omitted rows remain in case evidence.
+        overview = (step["request"]["tool_id"] == "pcap"
+                    and step["request"]["params"].get("protocol", "overview") == "overview")
+        for row in step["evidence"][:2 if overview else 8]:
             visible = {}
             budget = 3000
             previews = {}
@@ -179,6 +201,7 @@ def analyze(case, *, no_model=False, client=None, progress=None):
     seen = set()
     stagnant = 0
     evidence_seen = set()
+    decision_repair_used = False
     try:
         case.manifest["model"] = client.discover()
         case.save()
@@ -220,6 +243,45 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                 if progress:
                     for line in case.manifest["plan"]:
                         progress(line)
+            if decision.action == "tool":
+                request = decision.request.model_copy(update={"origin": "model"})
+                signature = request_signature(request)
+                if signature in seen:
+                    case.manifest["warnings"].append("模型重复相同有效参数的工具请求，未再次执行")
+                    if decision_repair_used:
+                        case.manifest["state"] = "stopped_duplicate"
+                        break
+                    decision_repair_used = True
+                    feedback = {"rejected_request": request.model_dump(mode="json"), "instruction":
+                        "这个请求与已执行请求等价（包含默认参数），不会再次执行。只允许一次重新决策："
+                        "已有observations能回答就返回finish并逐字引用证据；否则选择确有新增信息的工具/筛选/下一页。"
+                        "若仍无依据，finish并说明不足。不得猜测答案或重复相同请求。"}
+                    messages = [*messages, {"role": "user", "content": json.dumps(feedback, ensure_ascii=False)}]
+                    repair_path = case.directory / f"model-{len(case.manifest['steps']) + 1:03d}-decision-repair.json"
+                    repaired = None
+                    if progress:
+                        progress("重复工具请求未执行，允许一次重新决策")
+                    try:
+                        repaired, raw = client.decide(messages)
+                        write_json(repair_path, {"messages": messages, "response": raw})
+                    except Exception as exc:
+                        write_json(repair_path.with_name(repair_path.stem + "-failed.json"),
+                                   {"messages": messages, "error": str(exc)[:4000],
+                                    "response": getattr(client, "last_response", None)})
+                        case.manifest["warnings"].append(f"重新决策失败：{type(exc).__name__}: {exc}")
+                    if case.record_integrity("model_decision_repair")["issues"]:
+                        break
+                    if repaired is None:
+                        case.manifest["state"] = "stopped_duplicate"
+                        break
+                    decision = repaired
+                    if decision.action == "tool":
+                        request = decision.request.model_copy(update={"origin": "model"})
+                        signature = request_signature(request)
+                        if signature in seen:
+                            case.manifest["warnings"].append("重新决策仍重复已有请求，停止调查")
+                            case.manifest["state"] = "stopped_duplicate"
+                            break
             if decision.action == "finish":
                 if case.record_integrity("model_finish")["issues"]:
                     break
@@ -258,12 +320,6 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                 if not answers:
                     case.manifest["warnings"].append("证据不足，无法生成有来源支持的候选答案")
                 case.manifest["state"] = "completed" if answers else "insufficient_evidence"
-                break
-            request = decision.request.model_copy(update={"origin": "model"})
-            signature = json.dumps(request.model_dump(), sort_keys=True, ensure_ascii=False)
-            if signature in seen:
-                case.manifest["warnings"].append("模型重复相同工具调用，停止调查")
-                case.manifest["state"] = "stopped_duplicate"
                 break
             seen.add(signature)
             if progress:

@@ -93,6 +93,21 @@ class ArchiveParams(StrictModel):
 class PcapParams(StrictModel):
     protocol: Literal["overview", "dns", "http", "tls"] = "overview"
     limit: int = Field(default=200, ge=1, le=1000)
+    offset: int = Field(default=0, ge=0, le=1000000, strict=True)
+    ip_address: str = Field(default="", max_length=45)
+    tcp_stream: int | None = Field(default=None, ge=0, strict=True)
+
+    @field_validator("ip_address")
+    @classmethod
+    def valid_ip_address(cls, value):
+        from ipaddress import ip_address
+
+        if not value:
+            return value
+        # Scope IDs are interface names, not addresses usable in the fixed filter.
+        if "%" in value:
+            raise ValueError("只允许 IPv4 或 IPv6 地址，不允许接口 scope ID")
+        return str(ip_address(value))
 
 
 class EvtxParams(StrictModel):
