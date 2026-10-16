@@ -5,16 +5,71 @@ from datetime import datetime, timezone
 import io
 import json
 from pathlib import Path
+import re
 import time
 
 from forensic_agent.agent.loop import analyze
 from forensic_agent.evidence import Case
 from forensic_agent.evidence.store import sha256_file, write_json
+from forensic_agent.evidence.values import evidence_value, supports_answer
 from forensic_agent.models import ToolRequest
 from forensic_agent.reports import generate_report
 from forensic_agent.settings import load_settings
 from forensic_agent.tools.process import capture, clean_environment
 from forensic_agent.tools.runner import run_tool
+
+
+def answers_pass(case, question, reference):
+    """Require cited full-capture statistics, not merely coincidentally correct values."""
+    if question not in {"honeynet-q1", "honeynet-q3"}:
+        return False
+    if case.manifest["state"] != "completed" or case.verify_current():
+        return False
+    evidence = {row["id"]: (step, row) for step in case.manifest["steps"] for row in step["evidence"]}
+    addresses, sessions, ip_citations = set(), [], 0
+    for answer in case.manifest["answers"]:
+        field = answer["field"]
+        ip_field = field == "ip_addresses" or re.fullmatch(r"ip_addresses\[[0-9]{1,6}\]", field)
+        if not (ip_field if question == "honeynet-q1" else field == "tcp_session_count"):
+            continue
+        found = evidence.get(answer["evidence_id"])
+        if not found:
+            return False
+        step, row = found
+        request, data = step["request"], row["data"]
+        scope, params = data.get("scope", {}), request.get("params", {})
+        if (request["tool_id"] != "pcap" or request["source_id"] != case.manifest["root_id"]
+                or row["source_id"] != case.manifest["root_id"]
+                or row["locator"].get("kind") != "pcap_summary"
+                or step["result"]["status"] not in {"ok", "partial"}
+                or step["integrity"]["issues"] or not supports_answer(step, row)
+                or scope.get("kind") != "capture" or scope.get("protocol") != "overview"
+                or params.get("protocol", "overview") != "overview"
+                or scope.get("ip_address") not in {None, ""} or scope.get("tcp_stream") is not None
+                or params.get("ip_address") not in {None, ""} or params.get("tcp_stream") is not None):
+            return False
+        try:
+            value = evidence_value(data, field)
+        except KeyError:
+            return False
+        if json.dumps(value, sort_keys=True) != json.dumps(answer["value"], sort_keys=True):
+            return False
+        if question == "honeynet-q1":
+            if (data.get("ip_statistics_complete") is not True or data.get("ip_addresses_complete") is not True
+                    or not isinstance(data.get("ip_addresses"), list)
+                    or sorted(data["ip_addresses"]) != sorted(reference["ip_addresses"])):
+                return False
+            values = value if isinstance(value, list) else [value]
+            if not all(isinstance(address, str) for address in values):
+                return False
+            addresses.update(values)
+            ip_citations += 1
+        else:
+            if data.get("tcp_statistics_complete") is not True or type(value) is not int:
+                return False
+            sessions.append(value)
+    return (addresses == set(reference["ip_addresses"]) and ip_citations > 0 if question == "honeynet-q1"
+            else bool(sessions) and all(value == reference["tcp_session_count"] for value in sessions))
 
 
 def main():
@@ -61,15 +116,7 @@ def main():
         analyze(case, progress=lambda line: print(name + ": " + line, flush=True))
         report = generate_report(case)
         answers = case.manifest["answers"]
-        if name == "honeynet-q1":
-            values = {value for answer in answers for value in
-                      (answer["value"] if isinstance(answer["value"], list) else [answer["value"]])
-                      if isinstance(value, str)}
-            correct = values == set(ips)
-        else:
-            correct = any(answer["value"] == len(streams) and isinstance(answer["value"], int)
-                          and answer["field"] == "tcp_session_count" for answer in answers)
-        outcome = {"test": name, "passed": case.manifest["state"] == "completed" and correct and not case.verify_current(),
+        outcome = {"test": name, "passed": answers_pass(case, name, reference),
                    "state": case.manifest["state"], "answers": answers, "warnings": case.manifest["warnings"],
                    "case": str(case.directory), "report": str(report), "elapsed_seconds": time.monotonic() - start,
                    "tools": [step["request"] for step in case.manifest["steps"]]}

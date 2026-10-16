@@ -12,9 +12,9 @@ from ..models import ToolRecord, ToolResult
 from .basic import identify
 
 
-PCAP_FIELDS = ["frame.number", "frame.time_epoch", "frame.len", "frame.cap_len", "_ws.col.Protocol", "eth.type",
+PCAP_FIELDS = ["frame.number", "frame.time_epoch", "frame.len", "frame.cap_len", "_ws.col.Protocol", "eth.type", "vlan.etype",
                "ip.version", "ip.src", "ip.dst", "ip.proto", "ipv6.version", "ipv6.src", "ipv6.dst", "ipv6.nxt",
-               "ipv6.hopopts.nxt", "ipv6.routing.nxt", "ipv6.fraghdr.nxt", "ipv6.dstopts.nxt",
+               "ipv6.hopopts.nxt", "ipv6.routing.nxt", "ipv6.fraghdr.nxt", "ipv6.dstopts.nxt", "ah.next_header",
                "tcp.stream", "tcp.hdr_len", "tcp.srcport", "tcp.dstport", "udp.srcport", "udp.dstport",
                "dns.qry.name", "dns.a", "dns.aaaa", "http.request.method", "http.host", "http.request.uri",
                "tls.handshake.extensions_server_name"]
@@ -73,7 +73,8 @@ def pcap(ctx, params):
             values = {field: [value for value in (row.get(field) or "").split(",") if value]
                       for field in PCAP_FIELDS}
             next_headers = [value for field in ("ip.proto", "ipv6.nxt", "ipv6.hopopts.nxt",
-                                                "ipv6.routing.nxt", "ipv6.fraghdr.nxt", "ipv6.dstopts.nxt")
+                                                "ipv6.routing.nxt", "ipv6.fraghdr.nxt", "ipv6.dstopts.nxt",
+                                                "ah.next_header")
                             for value in values[field]]
             ipv6_next_headers = [value for field in ("ipv6.nxt", "ipv6.hopopts.nxt", "ipv6.routing.nxt",
                                                      "ipv6.fraghdr.nxt", "ipv6.dstopts.nxt")
@@ -85,11 +86,13 @@ def pcap(ctx, params):
                                                                  ("60", "ipv6.dstopts.nxt")))
             # Account for a missing inner IP header as well as a missing link/network header.
             # Wireshark also exposes ip.version=6 for IPv6 packets.
+            network_types = values["eth.type"] + values["vlan.etype"]
             expected_v4 = max(values["ip.version"].count("4"),
-                              values["eth.type"].count("0x0800") + next_headers.count("4"))
+                              network_types.count("0x0800") + next_headers.count("4"))
             expected_v6 = max(len(values["ipv6.version"]),
-                              values["eth.type"].count("0x86dd") + next_headers.count("41"))
-            missing_network = (missing_ipv6_extension or len(values["ip.src"]) != expected_v4
+                              network_types.count("0x86dd") + next_headers.count("41"))
+            missing_ah = next_headers.count("51") > len(values["ah.next_header"])
+            missing_network = (missing_ipv6_extension or missing_ah or len(values["ip.src"]) != expected_v4
                                or len(values["ip.dst"]) != expected_v4
                                or len(values["ip.proto"]) != expected_v4
                                or len(values["ipv6.src"]) != expected_v6

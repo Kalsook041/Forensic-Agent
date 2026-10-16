@@ -358,3 +358,66 @@ def test_missing_ipv6_extension_header_cannot_claim_zero_tcp_sessions(tmp_path, 
     assert summary["tcp_session_count"] is None and summary["observed_tcp_session_count"] == 0
     assert not summary["tcp_statistics_complete"] and not summary["statistics_complete"]
     assert step["result"]["status"] == "partial"
+
+
+@pytest.mark.parametrize("version", [4, 6])
+@pytest.mark.parametrize("capture", ["missing_ip", "full", "payload_only"])
+def test_vlan_network_completeness_uses_inner_type(tmp_path, settings, version, capture):
+    addresses = (("192.0.2.1", "198.51.100.2") if version == 4
+                 else ("2001:db8::1", "2001:db8::2"))
+    plain = _packet(*addresses, 40001, 80, tcp=True, payload=b"payload" * 5)
+    packet = plain[:12] + b"\x81\x00\x00\x01" + plain[12:]
+    path = tmp_path / "VLAN.pcap"
+    if capture == "full":
+        _write_capture(path, [(1700000000, 0, packet)])
+    else:
+        length = 18 if capture == "missing_ip" else 18 + (20 if version == 4 else 40) + 20
+        _write_truncated_capture(path, packet, length)
+    case = Case.create(path, settings)
+    step = _run(case)
+    summary = _summary(step)
+    complete = capture != "missing_ip"
+    assert summary["ip_address_count"] == (2 if complete else None)
+    assert summary["observed_ip_address_count"] == (2 if complete else 0)
+    assert summary["ip_statistics_complete"] == complete
+    assert summary["tcp_session_count"] == (1 if complete else None)
+    assert summary["observed_tcp_session_count"] == (1 if complete else 0)
+    assert summary["tcp_statistics_complete"] == summary["statistics_complete"] == complete
+    assert summary["capture_truncated_packet_count"] == (0 if capture == "full" else 1)
+    assert step["result"]["status"] == ("ok" if capture == "full" else "partial")
+    assert not case.verify_originals()
+
+
+@pytest.mark.parametrize("version", [4, 6])
+@pytest.mark.parametrize("capture", ["missing_ah", "missing_tcp", "full", "payload_only"])
+def test_ah_next_header_controls_transport_completeness(tmp_path, settings, version, capture):
+    addresses = (("192.0.2.1", "198.51.100.2") if version == 4
+                 else ("2001:db8::1", "2001:db8::2"))
+    packet = bytearray(_packet(*addresses, 40001, 80, tcp=True, payload=b"payload" * 5))
+    network_end = 34 if version == 4 else 54
+    ah = struct.pack("!BBHII", 6, 4, 0, 1, 1) + bytes(12)
+    packet[network_end:network_end] = ah
+    packet[23 if version == 4 else 20] = 51
+    struct.pack_into("!H", packet, 16 if version == 4 else 18,
+                     len(packet) - (14 if version == 4 else 54))
+    path = tmp_path / "AH.pcap"
+    if capture == "full":
+        _write_capture(path, [(1700000000, 0, packet)])
+    else:
+        length = {"missing_ah": network_end, "missing_tcp": network_end + len(ah),
+                  "payload_only": network_end + len(ah) + 20}[capture]
+        _write_truncated_capture(path, packet, length)
+    case = Case.create(path, settings)
+    step = _run(case)
+    summary = _summary(step)
+    tcp_complete = capture in {"full", "payload_only"}
+    ip_complete = capture != "missing_ah"
+    assert summary["ip_address_count"] == (2 if ip_complete else None)
+    assert summary["observed_ip_address_count"] == 2
+    assert summary["ip_statistics_complete"] == ip_complete
+    assert summary["tcp_session_count"] == (1 if tcp_complete else None)
+    assert summary["observed_tcp_session_count"] == (1 if tcp_complete else 0)
+    assert summary["tcp_statistics_complete"] == summary["statistics_complete"] == tcp_complete
+    assert summary["capture_truncated_packet_count"] == (0 if capture == "full" else 1)
+    assert step["result"]["status"] == ("ok" if capture == "full" else "partial")
+    assert not case.verify_originals()

@@ -9,6 +9,9 @@ null，observed_ip_address_count 仅记录已解码地址数量。
 先检查 tcp_statistics_complete。已知 TCP 但缺少可解码 tcp.stream（例如 TCP 头未采集或未重组分片）时，
 tcp_session_count=null、tcp_statistics_complete=false、statistics_complete=false；
 observed_tcp_session_count 仅为已解码会话数量，不能替代未知总数。网络头缺失也会使完整 IP/TCP 数量未知。
+VLAN 使用内层类型识别应有的 IPv4/IPv6 头；内层头未采集时，不能把缺少地址或会话解释为完整的0。
+AH 使用其 Next Header 继续检查后继头部：AH 后的 TCP 头缺失时 TCP 总数未知，已完整解码的 IP 地址仍可完整。
+AH 自身缺失且后继协议未知时，网络和传输统计均按未知处理，以免遗漏可能的内层 IP。
 UDP 头部是否足以统计端口由 udp_statistics_complete 标注。完整性为 false 时，端口列表仅表示已观察值。
 frame.cap_len < frame.len 的全部采集截断帧都会导致 partial，并计入 capture_truncated_packet_count。
 只有载荷截断而 IP/TCP 头已完整解码时，TCP 会话统计仍可完整；采集缺失的载荷无法恢复，不能推测其内容。
