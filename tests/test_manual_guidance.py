@@ -272,8 +272,10 @@ def test_optional_guide_cannot_consume_space_needed_by_primary_reports(tmp_path,
         allocated[name] = len(data)
 
     def limited_text(path, text, *args, **kwargs):
-        if path.parent == case.directory and path.name in {"report.md", "manual-guide.md"}:
-            reserve(path.name, text.encode("utf-8"))
+        if path.parent == case.directory and path.name in {"report.md", "report.md.tmp", "manual-guide.md"}:
+            # The atomic Markdown replacement still consumes the primary-report
+            # allocation; never let its temporary filename bypass this quota.
+            reserve("report.md" if path.name == "report.md.tmp" else path.name, text.encode("utf-8"))
         return original_text(path, text, *args, **kwargs)
 
     def limited_json(path, value):

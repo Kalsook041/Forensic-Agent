@@ -129,7 +129,8 @@ class Case:
     def _phase_event(self, record: dict, event: str) -> None:
         if self.progress_callback is None:
             return
-        payload = {"type": "phase_progress", "event": event, "phase_id": record["id"],
+        payload = {"type": "phase_progress", "case_directory": str(self.directory),
+                   "event": event, "phase_id": record["id"],
                    "stage": record["stage"], "elapsed_seconds": record.get("elapsed_seconds", 0.0),
                    "hash_bytes": record["hash_bytes"], "hash_passes": record["hash_passes"],
                    "copy_bytes": record["copy_bytes"], "details": record["details"]}

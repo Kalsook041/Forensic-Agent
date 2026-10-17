@@ -134,7 +134,9 @@ def generate_report(case, *, verify_integrity=True):
     if guidance["needed"]:
         lines += [guidance["text"].replace("\n## ", "\n### ").replace("# 人工操作指南", "## 人工操作指南", 1)]
     report_path = case.directory / "report.md"
-    report_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    pending_report = report_path.with_suffix(".md.tmp")
+    pending_report.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    pending_report.replace(report_path)
     report_data = {"case": case.manifest, "evidence": evidence,
                    "warnings": list(dict.fromkeys(warnings)), "manual_guidance": guidance}
     json_path = case.directory / "report.json"

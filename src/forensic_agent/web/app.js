@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 const token = document.querySelector('meta[name="session-token"]').content;
 let tools = {}, currentCase = null, currentReport = "", modelName = "本地模型", maxQuestion = 1000;
 let busy = false, finishedTask = null, polling = false, stopped = false;
+let activeTaskId = null;
 let manualText = "", manualCase = null, manualRequest = 0, reportRequest = 0;
 let nextQuestionCase = null;
 const names = {inventory:"文件清单与类型",hash:"SHA256 哈希",search:"文本搜索",metadata:"文件元数据",archive:"压缩包",pcap:"网络流量",sqlite:"SQLite 数据库",evtx:"Windows 事件日志",evtxecmd:"EZTools 事件日志"};
@@ -149,14 +150,19 @@ async function showReport(id, fresh = false, question = null) {
 }
 async function renderTask(task) {
   if (!task) return;
+  const running = task.status === "running" || task.status === "cancelling";
+  activeTaskId = running ? task.id : null;
+  $("cancel-task").hidden = !running;
+  $("cancel-task").disabled = task.status === "cancelling";
+  $("cancel-task").textContent = task.status === "cancelling" ? "正在中止…" : "中止分析";
   $("output").hidden = false;
-  setBusy(task.status === "running");
+  setBusy(running);
   $("task-status").className = `status ${task.status}`;
-  $("task-status").textContent = task.status === "running" ? "正在执行" : task.status === "failed" ? states[task.result?.state] || "未正常完成" : "已完成";
+  $("task-status").textContent = task.status === "cancelling" ? "正在中止" : task.status === "cancelled" ? "已中止" : task.status === "running" ? "正在执行" : task.status === "failed" ? states[task.result?.state] || "未正常完成" : "已完成";
   $("logs").replaceChildren(); for (const line of task.logs) { const li = document.createElement("li"); li.textContent = line; $("logs").append(li); }
   $("log-count").textContent = `${task.logs.length} 条记录`;
-  $("running-state").hidden = task.status !== "running";
-  if (task.status === "running" || finishedTask === task.id) return;
+  $("running-state").hidden = !running;
+  if (running || finishedTask === task.id) return;
   finishedTask = task.id;
   if (task.error) notice(task.error);
   if (task.case) {
@@ -170,7 +176,7 @@ async function renderTask(task) {
       $("output-title").textContent = "任务失败详情";
     }
   }
-  else { $("diagnostics").hidden = false; $("diagnostics").textContent = JSON.stringify(task.result || {error:task.error}, null, 2); $("output-title").textContent = task.action === "doctor" ? "环境检查结果" : "任务结果"; if (task.status === "failed") await showManualGuide(); }
+  else { $("diagnostics").hidden = false; $("diagnostics").textContent = JSON.stringify(task.result || {error:task.error}, null, 2); $("output-title").textContent = task.action === "doctor" ? "环境检查结果" : "任务结果"; if (["failed", "cancelled"].includes(task.status)) await showManualGuide(); }
   try { renderCases((await api("/api/cases")).cases); } catch (error) { notice(`无法更新历史案件：${error.message}`); }
 }
 async function start(data) {
@@ -189,7 +195,7 @@ async function start(data) {
 async function poll() {
   if (polling || stopped) return;
   polling = true;
-  try { const data = await api("/api/task"); connectionNotice(); if (data.task && (data.task.status === "running" || data.task.id !== finishedTask)) await renderTask(data.task); }
+  try { const data = await api("/api/task"); connectionNotice(); if (data.task && (["running", "cancelling"].includes(data.task.status) || data.task.id !== finishedTask)) await renderTask(data.task); }
   catch (error) { connectionNotice(`本地服务连接中断：${error.message}。请确认启动器仍在运行，连接恢复后会自动更新。`); }
   finally { polling = false; }
 }
@@ -203,6 +209,15 @@ $("next-question-form").addEventListener("submit", event => {
   start({action:"new_question", case:nextQuestionCase, question, mode});
 });
 $("cancel-next-question").addEventListener("click", () => { nextQuestionCase = null; $("next-question-panel").hidden = true; });
+$("cancel-task").addEventListener("click", async () => {
+  const id = activeTaskId;
+  if (!id || $("cancel-task").disabled) return;
+  $("cancel-task").disabled = true;
+  try {
+    const result = await api("/api/cancel", {id});
+    if (activeTaskId === id && result.task?.id === id) await renderTask(result.task);
+  } catch (error) { if (activeTaskId === id) { notice(`中止请求失败：${error.message}；任务可能仍在运行。`); $("cancel-task").disabled = false; } }
+});
 $("tool-id").addEventListener("change", toolChanged);
 $("analysis-form").addEventListener("submit", event => {
   event.preventDefault(); let params = {}; const mode = $("execution-mode").value;

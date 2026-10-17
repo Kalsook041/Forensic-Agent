@@ -6,6 +6,38 @@ import test from 'node:test';
 const clientCode = await readFile(new URL('../src/forensic_agent/web/app.js', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('cancel remains available while inputs are disabled and sends only the current task ID', async () => {
+  const {node,context} = await readyClient();
+  await vm.runInContext('renderTask({id:"active",status:"running",logs:[]})', context);
+  assert.equal(node('input-fields').disabled, true);
+  assert.equal(node('cancel-task').hidden, false);
+  assert.equal(node('cancel-task').disabled, false);
+  const calls = [];
+  context.fetch = async (url, options) => {
+    calls.push([url,JSON.parse(options.body)]);
+    return {ok:true,json:async () => ({task:{id:'active',status:'cancelling',logs:[]}})};
+  };
+  await node('cancel-task').listeners.click();
+  assert.deepEqual(calls, [['/api/cancel',{id:'active'}]]);
+  assert.equal(node('cancel-task').disabled, true);
+  assert.equal(node('task-status').textContent, '正在中止');
+  assert.equal(node('input-fields').disabled, true);
+});
+
+test('slow cancel response cannot replace a newer task', async () => {
+  const {node,context} = await readyClient();
+  await vm.runInContext('renderTask({id:"old",status:"running",logs:[]})', context);
+  let resolve;
+  context.fetch = () => new Promise(done => { resolve = done; });
+  const pending = node('cancel-task').listeners.click();
+  await vm.runInContext('renderTask({id:"new",status:"running",logs:[]})', context);
+  resolve({ok:true,json:async () => ({task:{id:'old',status:'cancelling',logs:[]}})});
+  await pending;
+  assert.equal(node('task-status').textContent, '正在执行');
+  assert.equal(node('cancel-task').disabled, false);
+  assert.equal(vm.runInContext('activeTaskId', context), 'new');
+});
+
 async function readyClient() {
   const nodes = new Map(), requests = [];
   const node = id => {

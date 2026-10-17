@@ -39,6 +39,22 @@ def request(server, path, data=None, headers=None):
     return urlopen(req, timeout=10)
 
 
+def test_cancel_api_checks_session_origin_and_current_task(server):
+    from collections import deque
+    server.workspace.task = {"id": "current", "status": "running", "logs": deque(), "cancel_requested": False}
+    for headers in ({"X-Session-Token": "wrong"}, {"Origin": "https://example.com"}):
+        with pytest.raises(HTTPError) as error:
+            request(server, "/api/cancel", {"id": "current"}, headers=headers)
+        assert error.value.code == 403
+    for payload in ({}, {"id": "old"}, {"id": ["current"]}):
+        with pytest.raises(HTTPError) as error:
+            request(server, "/api/cancel", payload)
+        assert error.value.code == 400
+    assert server.workspace.snapshot()["status"] == "running"
+    with request(server, "/api/cancel", {"id": "current"}) as response:
+        assert json.load(response)["task"]["status"] == "cancelling"
+
+
 def test_page_assets_and_bootstrap(server):
     with request(server, "/") as response:
         html = response.read().decode()

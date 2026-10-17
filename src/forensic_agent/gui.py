@@ -17,6 +17,7 @@ import webbrowser
 
 from .agent.loop import CONTINUABLE_STATES
 from .evidence import Case
+from .tools.process import WindowsJob
 from .evidence.paths import local_path, within
 from .models import MAX_QUESTION_CHARS, ToolRequest
 from .settings import load_settings
@@ -38,6 +39,8 @@ class Workspace:
         self.lock = threading.Lock()
         self.task = None
         self.worker = None
+        self.task_job = None
+        self.task_process = None
         self.picker_lock = threading.Lock()
 
     def case_path(self, identity):
@@ -158,12 +161,19 @@ class Workspace:
 
     def start(self, data):
         args = self.command(data)
+        prior_runs = None
+        if data["action"] in {"continue", "new_question", "report"}:
+            manifest = json.loads((self.case_path(data["case"]) / "case.json").read_text(encoding="utf-8"))
+            prior_runs = len(manifest.get("analysis_runs", []))
         with self.lock:
-            if self.task and self.task["status"] == "running":
+            if self.task and self.task["status"] in {"running", "cancelling"}:
                 raise BusyError("已有任务正在执行，请等待完成后再开始")
             self.task = {"id": secrets.token_hex(8), "action": data["action"], "status": "running",
                          "started": datetime.now().astimezone().isoformat(), "logs": deque(maxlen=160),
-                         "result": None, "case": None, "error": None}
+                         "result": None, "case": None, "error": None, "cancel_requested": False}
+            if data["action"] in {"continue", "new_question", "report"}:
+                self.task["case"] = data["case"]
+                self.task["prior_analysis_runs"] = prior_runs
             if data["action"] in {"continue", "new_question"}:
                 self.task["logs"].append("正在核验原件、已有副本和既有工具输出；通过后继续分析，不复制检材。")
             elif data["action"] in {"analyze", "tool"}:
@@ -178,11 +188,33 @@ class Workspace:
         with self.lock:
             return {**self.task, "logs": list(self.task["logs"])} if self.task else None
 
+    def cancel(self, identity):
+        with self.lock:
+            if not isinstance(identity, str) or not self.task or self.task["id"] != identity:
+                raise ValueError("任务已变化，未中止其他任务；请刷新运行状态")
+            if self.task["status"] in {"running", "cancelling"}:
+                if self.task_process is not None and self.task_process.poll() is not None:
+                    return {**self.task, "logs": list(self.task["logs"])}
+                if not self.task["cancel_requested"]:
+                    self.task["cancel_requested"] = True
+                    self.task["status"] = "cancelling"
+                    self.task["logs"].append("用户请求中止；正在停止任务进程树并保留已有记录。")
+                if self.task_job:
+                    self.task_job.terminate()
+        return self.snapshot()
+
     def _event(self, value):
         with self.lock:
             if "progress" in value:
                 text = str(value["progress"])
                 event = value.get("progress_event")
+                if isinstance(event, dict) and event.get("case_directory"):
+                    try:
+                        path = Path(event["case_directory"])
+                        if path == self.case_path(path.name):
+                            self.task["case"] = path.name
+                    except (OSError, ValueError, TypeError):
+                        self.task["logs"].append("忽略无法验证的进度案件路径。")
                 if isinstance(event, dict) and isinstance(event.get("details"), dict):
                     copied = event.get("copy_bytes")
                     if isinstance(copied, int) and copied:
@@ -197,11 +229,30 @@ class Workspace:
                     self.task["case"] = Path(value["report"]).parent.name
 
     def _run(self, args):
+        job = None
         try:
+            job = WindowsJob(self.settings.limits, tree_only=True)
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             decoder, pending, received = json.JSONDecoder(), "", 0
-            with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            proxy = Path(__file__).parent / "tools" / "_startup_proxy.py"
+            with subprocess.Popen([sys.executable, "-I", str(proxy)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   text=True, encoding="utf-8", errors="replace", creationflags=flags) as process:
+                try:
+                    job.assign(process.pid)
+                    with self.lock:
+                        self.task_job = job
+                        self.task_process = process
+                        cancelled = self.task["cancel_requested"]
+                        if cancelled:
+                            job.terminate()
+                        else:
+                            process.stdin.write(json.dumps({"argv": args, "input": ""}, ensure_ascii=True))
+                            process.stdin.close()
+                except BaseException:
+                    process.kill()
+                    process.wait(timeout=5)
+                    raise
                 for line in process.stdout:
                     received += len(line)
                     if received > 2 * 1024**2:
@@ -218,20 +269,61 @@ class Workspace:
                             self._event(value)
                         pending = pending[end:]
                 code = process.wait()
+                job.terminate()
+            with self.lock:
+                cancelled = self.task["cancel_requested"]
+            if cancelled:
+                self._save_cancelled_case()
             with self.lock:
                 result = self.task["result"] or {}
-                self.task["status"] = "completed" if code == 0 else "failed"
+                self.task["status"] = "cancelled" if cancelled else "completed" if code == 0 else "failed"
                 self.task["exit_code"] = code
-                if code != 0:
+                if code != 0 and not cancelled:
                     self.task["error"] = (result.get("error") or
                                           "任务未正常完成，请查看报告中的状态、警告与不确定性。")
                 if pending.strip():
                     self.task["logs"].append(pending[-4000:])
-                self.task["logs"].append("任务完成。" if code == 0 else f"任务结束，退出码 {code}。")
+                self.task["logs"].append("已中止；任务进程树已退出，已有记录保留。" if cancelled else
+                                         "任务完成。" if code == 0 else f"任务结束，退出码 {code}。")
         except Exception as exc:
             with self.lock:
                 self.task["status"] = "failed"
                 self.task["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            with self.lock:
+                if self.task_job is job:
+                    self.task_job = None
+                    self.task_process = None
+                if job:
+                    job.terminate()
+                    job.close()
+
+    def _save_cancelled_case(self):
+        with self.lock:
+            identity = self.task["case"]
+        if not identity:
+            return
+        with self.lock:
+            if self.task["action"] not in {"analyze", "tool", "continue", "new_question"}:
+                return
+        try:
+            case = Case(self.case_path(identity), self.settings)
+            with case.exclusive_operation():
+                if self.task["action"] in {"continue", "new_question"} and len(
+                        case.manifest.get("analysis_runs", [])) == self.task.get("prior_analysis_runs", 0):
+                    return
+                case.manifest["state"] = "cancelled"
+                case.invalidate_answers("用户中止，当前分析未完成完整性与引用复核")
+                case.manifest["warnings"].append("用户从工作台中止任务；未完成的复制、步骤及当前结论不得当作成功结果")
+                case.save()
+                from .reports import generate_report
+                report = generate_report(case, verify_integrity=False)
+            with self.lock:
+                self.task["result"] = {**(self.task["result"] or {}), "case": str(case.directory),
+                                       "state": "cancelled", "report": str(report)}
+        except Exception as exc:
+            with self.lock:
+                self.task["logs"].append(f"中止后保存诊断失败：{type(exc).__name__}: {exc}；已有文件保留")
 
     def pick(self, kind):
         if kind not in {"file", "directory"}:
@@ -334,11 +426,13 @@ class Handler(BaseHTTPRequestHandler):
             workspace = self.server.workspace
             if self.path == "/api/start":
                 return self.reply(202, {"task": workspace.start(data)})
+            if self.path == "/api/cancel":
+                return self.reply(202, {"task": workspace.cancel(data.get("id"))})
             if self.path == "/api/pick":
                 return self.reply(200, workspace.pick(data.get("kind")))
             if self.path == "/api/shutdown":
                 with workspace.lock:
-                    if workspace.task and workspace.task["status"] == "running":
+                    if workspace.task and workspace.task["status"] in {"running", "cancelling"}:
                         raise BusyError("请等待当前任务结束后再退出服务")
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return self.reply(200, {"message": "本地服务已退出，可以关闭页面"})

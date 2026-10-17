@@ -15,7 +15,7 @@ import time
 class WindowsJob:
     """A fail-closed job. The worker waits for stdin until assignment succeeds."""
 
-    def __init__(self, limits):
+    def __init__(self, limits, *, tree_only=False):
         if os.name != "nt":
             raise RuntimeError("受限执行器只支持 Windows；不会静默退回不受限执行")
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -53,13 +53,14 @@ class WindowsJob:
             _fields_ = [("ControlFlags", wintypes.DWORD), ("CpuRate", wintypes.DWORD)]
 
         extended = Extended()
-        extended.BasicLimitInformation.LimitFlags = 0x2000 | 0x100 | 0x200 | 0x8
-        extended.BasicLimitInformation.ActiveProcessLimit = 8
-        extended.ProcessMemoryLimit = limits.memory_bytes
-        extended.JobMemoryLimit = limits.memory_bytes
+        extended.BasicLimitInformation.LimitFlags = 0x2000 if tree_only else 0x2000 | 0x100 | 0x200 | 0x8
+        if not tree_only:
+            extended.BasicLimitInformation.ActiveProcessLimit = 8
+            extended.ProcessMemoryLimit = limits.memory_bytes
+            extended.JobMemoryLimit = limits.memory_bytes
         cpu = Cpu(1 | 4, limits.cpu_percent * 100)
         try:
-            for information_class, value in ((9, extended), (15, cpu)):
+            for information_class, value in ([(9, extended)] if tree_only else [(9, extended), (15, cpu)]):
                 if not self.kernel.SetInformationJobObject(self.handle, information_class,
                                                            ctypes.byref(value), ctypes.sizeof(value)):
                     raise ctypes.WinError(ctypes.get_last_error())
