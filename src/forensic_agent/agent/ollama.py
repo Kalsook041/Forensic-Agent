@@ -55,7 +55,7 @@ def decision_schema(tool_sources=None):
               "required": ["plan", "action", "request", "claims", "uncertainties"],
               "properties": {**properties, "action": {"const": "finish", "type": "string"},
                              "request": {"type": "null"}}}
-    return {"anyOf": [tool, finish], "$defs": base["$defs"]}
+    return {"anyOf": [tool, finish] if requests else [finish], "$defs": base["$defs"]}
 
 
 class OllamaClient:

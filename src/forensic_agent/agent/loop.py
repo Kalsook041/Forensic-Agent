@@ -347,7 +347,23 @@ def analyze(case, *, no_model=False, client=None, progress=None):
     try:
         case.manifest["model"] = client.discover()
         case.save()
-        while len(case.manifest["steps"]) < tool_budget(case):
+        while True:
+            final_reason = ("stopped_no_progress" if stagnant >= 2 else
+                            "stopped_budget" if len(case.manifest["steps"]) >= tool_budget(case) else None)
+            if final_reason:
+                case.manifest["state"] = final_reason
+                review = {"status": "started", "reason": final_reason, "started_utc": utc_now()}
+                case.manifest["analysis_runs"][-1]["final_review"] = review
+                if final_reason == "stopped_budget":
+                    case.manifest["warnings"].append("达到工具调用预算；保留全部已取得证据")
+                case.manifest["warnings"].append(
+                    "工具调查已停止；仅允许模型根据已有证据进行一次最终归纳，不再执行工具")
+                if case.record_integrity("before_final_review")["issues"]:
+                    review["status"] = "integrity_failed"
+                    break
+                case.save()
+                if progress:
+                    progress("工具调查已停止，正在结合题目归纳已有结果并校验证据引用")
             # Unsupported tool/source pairs cannot be selected again by the real model grammar.
             # Runtime validation and duplicate detection still apply to all clients.
             unsupported = {(step["request"]["tool_id"], step["request"]["source_id"])
@@ -360,9 +376,17 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                 if (name, identity) not in unsupported] for name, info in catalog(case.settings).items()
                 if info["available"]}
             messages = compact_messages(case)
+            if final_reason:
+                client.allowed_tool_sources = {}
+                messages.append({"role": "user", "content":
+                    "工具调查已停止。这是最终结果归纳，只能返回action=finish、request=null，不能请求工具。"
+                    "请结合当前题目检查已有工具结果，将可证实的答案值写入claims并逐字引用证据字段原值，"
+                    "把回答题目的简短解释写在interpretation；无法回答的部分写入uncertainties。"
+                    "预览省略、partial、失败或未知统计不能解释为完整结果或0；证据不足可以不提供claims。"})
             decision = None
-            for attempt in range(2):
-                response_path = audit_path(case, f"model-{len(case.manifest['steps']) + 1:03d}-{attempt}.json")
+            for attempt in range(1 if final_reason else 2):
+                suffix = "final-review" if final_reason else str(attempt)
+                response_path = audit_path(case, f"model-{len(case.manifest['steps']) + 1:03d}-{suffix}.json")
                 try:
                     decision, raw = client.decide(messages)
                     write_json(response_path,
@@ -376,8 +400,18 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                     messages.append({"role": "user", "content": "上次输出无效：" + str(exc)[:600]
                         + "。请按 schema 更正。尚无证据时请提供action=tool和完整request；不要把来源ID当成证据ID。"})
             if decision is None:
-                case.manifest["state"] = "model_failed"
+                if final_reason:
+                    review["status"] = "failed"
+                    case.manifest["warnings"].append("模型最终归纳失败；保留工具结果，未生成经校验的最终答案")
+                else:
+                    case.manifest["state"] = "model_failed"
                 break
+            if final_reason:
+                review["status"] = "responded"
+                if decision.action != "finish":
+                    review["status"] = "rejected_tool"
+                    case.manifest["warnings"].append("最终归纳只允许 finish；拒绝工具请求，未执行额外工具")
+                    break
             if not case.manifest.get("plan"):
                 purpose = (catalog(case.settings).get(decision.request.tool_id, {}).get("description", decision.request.tool_id)
                            if decision.request is not None else "核对已有工具结果")
@@ -439,6 +473,8 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                         case.manifest["warnings"].append("引用纠正预算已在本案件此前分析中使用；未再次调用模型")
                         case.manifest["answers"] = answers
                         case.manifest["state"] = "completed" if answers else "insufficient_evidence"
+                        if final_reason:
+                            review["status"] = "validated" if answers else "insufficient_evidence"
                         break
                     budgets["claim"] = True
                     case.save()
@@ -472,6 +508,8 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                 if not answers:
                     case.manifest["warnings"].append("证据不足，无法生成有来源支持的候选答案")
                 case.manifest["state"] = "completed" if answers else "insufficient_evidence"
+                if final_reason:
+                    review["status"] = "validated" if answers else "insufficient_evidence"
                 break
             seen.add(signature)
             if progress:
@@ -485,11 +523,6 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                 break
             if stagnant >= 2:
                 case.manifest["warnings"].append("连续两次工具调用没有新增证据，停止调查")
-                case.manifest["state"] = "stopped_no_progress"
-                break
-        else:
-            case.manifest["state"] = "stopped_budget"
-            case.manifest["warnings"].append("达到工具调用预算；保留全部已取得证据，未让模型继续无限调查")
     except KeyboardInterrupt:
         case.manifest["state"] = "cancelled"
         case.save()
@@ -498,6 +531,11 @@ def analyze(case, *, no_model=False, client=None, progress=None):
         case.manifest["state"] = "model_unavailable"
         case.manifest["warnings"].append(f"模型不可用：{type(exc).__name__}: {exc}；可使用 tool 或 analyze --no-model")
     finally:
+        review = case.manifest["analysis_runs"][-1].get("final_review")
+        if review:
+            if review["status"] in {"started", "responded"}:
+                review["status"] = case.manifest["state"]
+            review["finished_utc"] = utc_now()
         case.save()
         if own_client:
             client.close()
