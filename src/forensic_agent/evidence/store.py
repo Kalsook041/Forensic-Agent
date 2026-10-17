@@ -115,6 +115,19 @@ class Case:
                     if companion.exists():
                         local_path(companion)
                         files.append((companion, files[0][1].with_name(companion.name), "s00001"))
+        # Reject a known oversized set before copying its first member. Keep the
+        # per-file checks below as well, since files/free space can change later.
+        planned_bytes = sum(original.stat().st_size for original, _, _ in files)
+        capacity = self.settings.limits.snapshot_bytes
+        if planned_bytes > capacity:
+            raise ValueError(f"检材总量 {planned_bytes:,} 字节（{planned_bytes / 1024**3:.2f} GiB）"
+                             f"超过副本上限 {capacity:,} 字节（{capacity / 1024**3:.2f} GiB）；"
+                             "请缩小检材范围或使用足够容量的案件配置，分卷包应先解包。未复制检材文件")
+        available = shutil.disk_usage(self.directory).free
+        required = planned_bytes + self.settings.limits.reserve_disk_bytes
+        if available < required:
+            raise OSError(f"工作磁盘空间不足：可用 {available:,} 字节，不足以保存 {planned_bytes:,} 字节检材副本"
+                          f"并保留 {self.settings.limits.reserve_disk_bytes:,} 字节余量；未复制检材文件")
         for original, target, parent in files:
             size = original.stat().st_size
             total += size

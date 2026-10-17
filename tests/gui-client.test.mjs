@@ -62,6 +62,23 @@ test('sample restores model planning even after a rules selection', async () => 
   assert.equal(requests[0].mode, 'model');
 });
 
+test('missing failure report preserves the intake cause and displays diagnostics', async () => {
+  const {node,context} = await readyClient();
+  context.fetch = async url => ({
+    ok:!url.startsWith('/api/report'),
+    json:async () => url.startsWith('/api/report') ? {error:'report.md 不存在'} : {cases:[]},
+  });
+  await vm.runInContext(`renderTask({id:'failed-intake',status:'failed',case:'case-1',action:'analyze',
+    error:'检材总量 48 GiB 超过副本上限 10 GiB',
+    result:{state:'intake_failed'},logs:['任务结束，退出码 2。']})`, context);
+  assert.match(node('notice').textContent, /48 GiB.*10 GiB/);
+  assert.match(node('notice').textContent, /报告/);
+  assert.equal(node('diagnostics').hidden, false);
+  assert.match(node('diagnostics').textContent, /intake_failed/);
+  assert.equal(node('report-actions').hidden, true);
+  assert.equal(node('task-status').textContent, '检材登记失败');
+});
+
 test('long pasted text stays intact and manual tool mode clears hidden question validation', async () => {
   const {node} = await readyClient();
   const longQuestion = '长题干'.repeat(400);

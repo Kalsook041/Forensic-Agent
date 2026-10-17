@@ -89,13 +89,23 @@ def main(argv=None):
         print("已取消；工作进程树已终止，原件未作为写入目标。", file=sys.stderr)
         return 130
     except Exception as exc:
-        display({"error": f"{type(exc).__name__}: {exc}",
-                 "case": str(case.directory) if case else getattr(exc, "case_directory", None)})
+        failed_directory = str(case.directory) if case else getattr(exc, "case_directory", None)
+        result = {"error": f"{type(exc).__name__}: {exc}", "case": failed_directory}
+        # create() persists an intake_failed case before raising. Assignment to
+        # 'case' never completes on that path, but its diagnostic report is useful.
+        if case is None and failed_directory:
+            try:
+                case = Case(Path(failed_directory), settings)
+            except Exception as load_error:
+                result["report_error"] = f"无法读取失败案件：{type(load_error).__name__}: {load_error}"
         if case:
             try:
-                generate_report(case)
-            except OSError as report_error:
-                display({"report_error": str(report_error), "note": "报告写入失败；已持久化的操作记录保留在案件目录"})
+                result["report"] = str(generate_report(case))
+            except Exception as report_error:
+                result["report_error"] = f"{type(report_error).__name__}: {report_error}"
+            result["state"] = case.manifest["state"]
+            result["warnings"] = case.manifest["warnings"]
+        display(result)
         return 2
 
 

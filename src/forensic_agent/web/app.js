@@ -88,7 +88,17 @@ async function renderTask(task) {
   if (task.status === "running" || finishedTask === task.id) return;
   finishedTask = task.id;
   if (task.error) notice(task.error);
-  if (task.case) { try { await showReport(task.case, true); } catch (error) { notice(`任务已结束，但报告暂不可读：${error.message}。案件 ID：${task.case}`); } }
+  if (task.case) {
+    try { await showReport(task.case, true); }
+    catch (error) {
+      const cause = task.error || task.result?.error || "任务已结束";
+      notice(`${cause}\n报告未生成或暂不可读：${error.message}。案件 ID：${task.case}`);
+      $("report").hidden = true; $("report-actions").hidden = true; $("report-meta").hidden = true;
+      $("diagnostics").hidden = false;
+      $("diagnostics").textContent = JSON.stringify({...task.result, error:cause, case:task.case, report_error:error.message}, null, 2);
+      $("output-title").textContent = "任务失败详情";
+    }
+  }
   else { $("diagnostics").hidden = false; $("diagnostics").textContent = JSON.stringify(task.result || {error:task.error}, null, 2); $("output-title").textContent = task.action === "doctor" ? "环境检查结果" : "任务结果"; }
   try { renderCases((await api("/api/cases")).cases); } catch (error) { notice(`无法更新历史案件：${error.message}`); }
 }
