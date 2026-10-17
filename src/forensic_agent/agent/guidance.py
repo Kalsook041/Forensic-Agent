@@ -1,0 +1,21 @@
+"""Reusable, versioned task-reading policy shipped with the installed agent."""
+
+GUIDANCE_VERSION = "task-review-v2"
+
+TASK_GUIDANCE = (
+    "先审题再选工具：首轮必须填写task_review，只写简短可核查摘要，合计不超过1800 UTF-8字节，不输出内心推理。"
+    "targets逐项列出题目实际要求的答案及格式；scope保留相关设备、文件、用户、时间、时区和筛选范围，"
+    "未知条件简写未知，不必机械枚举无关属性。constraints逐条摘录题目的必须/仅/不要/不得等限制，不能遗漏或写成无限制。"
+    "evidence_needed说明什么原始痕迹/字段能证明每项答案，不能把文件名或背景当证据。"
+    "missing列出缺少的检材、格式信息或工具能力，没有缺口就空列表。stop_when写清可回答、证据不足或需人工的条件。"
+    "然后plan给最多3步，每步说明目标→工具/来源→预期证据；只请求第一个有信息增益的动作，按返回结果调整后续动作。"
+    "suggested_tool仅为关键词路由提示，不是已验证的计划；工具存在不等于支持当前检材。"
+    "格式不明先做最小识别，分卷只从首卷处理，不能逐卷文本搜索；不要默认加密或猜密码。"
+    "只查询当前问题所需范围，不因题目提到多个设备就遍历全部检材；完整统计不能用分页样本冒充。"
+    "没有observations不是工具不可用：如已有文件且hash可用，应先调用hash；不能因尚未取证而直接finish或填unknown引用。"
+    "只有明确缺少必要输入/解析能力且现有工具无法推进时，才finish且claims=[]，在uncertainties说明缺口和人工方向。"
+    "已有证据能回答就finish；计划是准备做的动作，不代表已完成。仅问计数时count得到值后立即finish，不得再取rows内容。"
+    "后续每次决策对照task_review.targets和scope；不沿用上一题答案，不重复等价工具请求。"
+    "遇到partial、错误或省略字段先判断它们影响哪项结论，未知不能当0；最终逐项说明已回答与未回答部分。"
+    "引用field相对于data，不带data.前缀；原值是数字3时value必须为数字3，不能写字符串\"3\"。"
+)

@@ -68,6 +68,11 @@ def generate_report(case, *, verify_integrity=True):
                   "没有经引用校验的模型候选答案。下列内容为工具直接输出；不能据此自动确认复杂问题。"]
     lines += ["", f"案件：{inline(case.manifest['case_id'])}", "",
               f"状态：{inline(case.manifest['state'])}", "", "## 解题计划", ""]
+    runs = [run for run in case.manifest.get("analysis_runs", [])
+            if run.get("question_id", "q0001") == case.manifest.get("question_id", "q0001")
+            and run.get("task_review")]
+    if runs:
+        lines += ["审题摘要（模型对题意的理解，需结合题目核对）：", code_json(runs[-1]["task_review"]), ""]
     lines += [f"{i}. {inline(line)}" for i, line in enumerate(case.manifest.get("plan", []), 1)] or ["直接工具调用。"]
     if case.manifest.get("question_id"):
         lines += ["", "题目记录：", code_json({"question_id": case.manifest["question_id"],

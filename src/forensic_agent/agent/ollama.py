@@ -15,7 +15,28 @@ class Claim(StrictModel):
     interpretation: str = Field(default="", max_length=1000)
 
 
+class TaskReview(StrictModel):
+    targets: list[str] = Field(min_length=1, max_length=5)
+    scope: str = Field(min_length=1, max_length=300)
+    constraints: list[str] = Field(max_length=5)
+    evidence_needed: list[str] = Field(min_length=1, max_length=5)
+    missing: list[str] = Field(default_factory=list, max_length=5)
+    stop_when: str = Field(min_length=1, max_length=300)
+
+    @model_validator(mode="after")
+    def concise(self):
+        if any(not line.strip() or len(line) > 200
+               for line in [*self.targets, *self.constraints, *self.evidence_needed, *self.missing]):
+            raise ValueError("审题条目须为 1..200 字符的简短摘要")
+        if not self.scope.strip() or not self.stop_when.strip():
+            raise ValueError("审题范围和停止条件不能为空白")
+        if len(self.model_dump_json().encode("utf-8")) > 1800:
+            raise ValueError("审题摘要超过 1800 UTF-8 字节，请精简且保留题目限制")
+        return self
+
+
 class Decision(StrictModel):
+    task_review: TaskReview | None = None
     plan: list[str] = Field(default_factory=list, max_length=5)
     action: Literal["tool", "finish"]
     request: ToolRequest | None = None
@@ -31,7 +52,7 @@ class Decision(StrictModel):
         return self
 
 
-def decision_schema(tool_sources=None):
+def decision_schema(tool_sources=None, *, require_task_review=False):
     """Encode action/request dependencies in the generation grammar, not only validation."""
     from ..tools.registry import REGISTRY
     requests = []
@@ -47,12 +68,19 @@ def decision_schema(tool_sources=None):
                                         "params": (adapter.model_params or adapter.params).model_json_schema()}})
     base = Decision.model_json_schema()
     properties = base["properties"]
+    required = ["plan", "action", "request", "claims", "uncertainties"]
+    if require_task_review:
+        properties["task_review"] = {"$ref": "#/$defs/TaskReview"}
+        required = ["task_review", *required]
     tool = {"type": "object", "additionalProperties": False,
-            "required": ["plan", "action", "request", "claims", "uncertainties"],
+            "required": required,
             "properties": {**properties, "action": {"const": "tool", "type": "string"},
                            "request": {"anyOf": requests}, "claims": {"type": "array", "maxItems": 0}}}
+    if require_task_review:
+        tool["properties"]["plan"] = {"type": "array", "items": {"type": "string"},
+                                      "minItems": 1, "maxItems": 3}
     finish = {"type": "object", "additionalProperties": False,
-              "required": ["plan", "action", "request", "claims", "uncertainties"],
+              "required": required,
               "properties": {**properties, "action": {"const": "finish", "type": "string"},
                              "request": {"type": "null"}}}
     return {"anyOf": [tool, finish] if requests else [finish], "$defs": base["$defs"]}
@@ -67,6 +95,7 @@ class OllamaClient:
         self.model_info = None
         self.last_response = None
         self.allowed_tool_sources = None
+        self.require_task_review = False
 
     def close(self):
         self.client.close()
@@ -110,7 +139,7 @@ class OllamaClient:
         if self.model_info is None:
             self.discover()
         payload = {"model": self.model_name, "messages": messages, "stream": False,
-                   "format": decision_schema(self.allowed_tool_sources),
+                   "format": decision_schema(self.allowed_tool_sources, require_task_review=self.require_task_review),
                    "options": {"temperature": 0, "num_ctx": self.settings.num_ctx,
                                "num_predict": self.settings.num_predict}, "keep_alive": "5m"}
         thinking = self.model_info.get("thinking") or {}
@@ -119,4 +148,9 @@ class OllamaClient:
         raw = self.request("POST", "/api/chat", payload)
         self.last_response = raw
         content = raw.get("message", {}).get("content", "")
-        return Decision.model_validate_json(content), raw
+        decision = Decision.model_validate_json(content)
+        if self.require_task_review and decision.task_review is None:
+            raise ValueError("首轮必须提供 task_review 审题摘要；未执行工具")
+        if self.require_task_review and decision.action == "tool" and not 1 <= len(decision.plan) <= 3:
+            raise ValueError("首轮工具请求必须先提供 1..3 步计划；未执行工具")
+        return decision, raw
