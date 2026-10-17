@@ -14,6 +14,7 @@ import threading
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
+from .agent.loop import CONTINUABLE_STATES
 from .evidence import Case
 from .evidence.paths import local_path, within
 from .models import MAX_QUESTION_CHARS, ToolRequest
@@ -60,7 +61,9 @@ class Workspace:
                 path = self.case_path(item.name)
                 data = json.loads((path / "case.json").read_text(encoding="utf-8"))
                 result.append({"id": item.name, "question": data.get("question") or "直接工具分析",
-                               "state": data.get("state", "unknown"), "created": data.get("created_utc", "")})
+                                "state": data.get("state", "unknown"), "created": data.get("created_utc", ""),
+                                "can_continue": bool(data.get("question") and data.get("root_id")
+                                                     and data.get("sources") and data.get("state") in CONTINUABLE_STATES)})
             except (OSError, ValueError):
                 continue
         return result
@@ -93,6 +96,12 @@ class Workspace:
             return args + ["doctor"]
         if action == "report":
             return args + ["report", str(self.case_path(data.get("case")))]
+        if action == "continue":
+            mode = data.get("mode", "model")
+            if mode not in {"model", "rules"}:
+                raise ValueError("继续案件只支持自动规划或规则模式")
+            return args + ["analyze", "--case", str(self.case_path(data.get("case"))), "--progress"] + (
+                ["--no-model"] if mode == "rules" else [])
         if action not in {"analyze", "tool"}:
             raise ValueError("请选择分析、直接工具或环境检查")
         evidence = data.get("evidence", "")
@@ -111,7 +120,7 @@ class Workspace:
             mode = data.get("mode", "model")
             if mode not in {"model", "rules"}:
                 raise ValueError("分析模式无效")
-            return args + ["analyze", "--evidence", str(path), "--question", question.strip()] + (
+            return args + ["analyze", "--evidence", str(path), "--question", question.strip(), "--progress"] + (
                 ["--no-model"] if mode == "rules" else [])
         params = data.get("params", {})
         request = ToolRequest(tool_id=data.get("tool_id", ""), source_id="s00001", params=params)
@@ -129,8 +138,12 @@ class Workspace:
             self.task = {"id": secrets.token_hex(8), "action": data["action"], "status": "running",
                          "started": datetime.now().astimezone().isoformat(), "logs": deque(maxlen=160),
                          "result": None, "case": None, "error": None}
-            self.task["logs"].append("任务已开始；登记检材、复制和哈希核对可能需要一些时间。"
-                                     if data["action"] in {"analyze", "tool"} else "任务已开始。")
+            if data["action"] == "continue":
+                self.task["logs"].append("正在核验原件、已有副本和既有工具输出；通过后继续分析，不复制检材。")
+            elif data["action"] in {"analyze", "tool"}:
+                self.task["logs"].append("任务已开始；登记检材、复制和哈希核对可能需要一些时间。")
+            else:
+                self.task["logs"].append("任务已开始。")
             self.worker = threading.Thread(target=self._run, args=(args,), name="forensic-gui-task")
             self.worker.start()
         return self.snapshot()
@@ -142,7 +155,13 @@ class Workspace:
     def _event(self, value):
         with self.lock:
             if "progress" in value:
-                self.task["logs"].append(str(value["progress"]))
+                text = str(value["progress"])
+                event = value.get("progress_event")
+                if isinstance(event, dict) and isinstance(event.get("details"), dict):
+                    copied = event.get("copy_bytes")
+                    if isinstance(copied, int) and copied:
+                        text += f"；已复制 {copied:,} 字节"
+                self.task["logs"].append(text)
             else:
                 self.task["result"] = value
                 if value.get("case"):

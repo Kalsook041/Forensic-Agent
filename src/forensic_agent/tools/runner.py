@@ -50,10 +50,11 @@ def run_tool(case, request: ToolRequest):
                 "grounding": row.get("grounding", "evidence") if supports_answer(previous, row) else "exploratory",
                 "data": {"value": value[params.start:params.start + params.length],
                          "total_length": len(value), "start": params.start}}
-        for source in sources:
-            path = local_path(source.working_path)
-            if not within(path, case.directory) or sha256_file(path) != source.sha256:
-                raise ValueError(f"工作副本越界或内容发生变化：{source.id}")
+        with case.phase("tool_verify_before", tool_id=request.tool_id, source_id=request.source_id):
+            for source in sources:
+                path = local_path(source.working_path)
+                if not within(path, case.directory) or sha256_file(path) != source.sha256:
+                    raise ValueError(f"工作副本越界或内容发生变化：{source.id}")
         if adapter.external_tool and not Path(getattr(case.settings.tools, adapter.external_tool)).is_file():
             raise FileNotFoundError(f"缺少工具：{adapter.external_tool}")
         payload = {"request": request.model_copy(update={"params": params.model_dump()}).model_dump(),
@@ -65,10 +66,11 @@ def run_tool(case, request: ToolRequest):
         argv = [sys.executable, "-I", "-m", "forensic_agent.worker"]
         step["worker_argv"] = argv
         case.save()
-        captured = capture(argv, cwd=directory, env=clean_environment(directory), timeout=timeout,
-                           max_output=case.settings.limits.output_bytes, job=job,
-                           input_bytes=json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n",
-                           stdout_path=directory / "worker.stdout.bin", stderr_path=directory / "worker.stderr.bin")
+        with case.phase("tool_execute", tool_id=request.tool_id, source_id=request.source_id):
+            captured = capture(argv, cwd=directory, env=clean_environment(directory), timeout=timeout,
+                               max_output=case.settings.limits.output_bytes, job=job,
+                               input_bytes=json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n",
+                               stdout_path=directory / "worker.stdout.bin", stderr_path=directory / "worker.stderr.bin")
         step["worker_exit_code"] = captured.returncode
         if captured.stopped or captured.returncode:
             result = ToolResult(status="failed", truncated=bool(captured.stopped),
@@ -95,7 +97,8 @@ def run_tool(case, request: ToolRequest):
         if job:
             job.close()
     try:
-        integrity = case.verify_current()
+        with case.phase("tool_verify_after", tool_id=request.tool_id, source_id=request.source_id):
+            integrity = case.verify_current()
     except KeyboardInterrupt:
         cancelled = True
         integrity = ["用户中断了原件哈希复核，完整性未验证；不等同于已确认原件变化"]
@@ -116,11 +119,12 @@ def run_tool(case, request: ToolRequest):
     output_files += [Path(row["locator"]["json_path"]) for row in step["evidence"] if "json_path" in row["locator"]]
     step["output_hashes"] = {}
     try:
-        for output in dict.fromkeys(output_files):
-            path = local_path(output)
-            if not within(path, directory):
-                raise ValueError("原始输出路径越界")
-            step["output_hashes"][str(path.relative_to(case.directory))] = sha256_file(path)
+        with case.phase("hash_output", tool_id=request.tool_id, source_id=request.source_id):
+            for output in dict.fromkeys(output_files):
+                path = local_path(output)
+                if not within(path, directory):
+                    raise ValueError("原始输出路径越界")
+                step["output_hashes"][str(path.relative_to(case.directory))] = sha256_file(path)
     except (OSError, ValueError) as exc:
         result.status = "failed"
         result.warnings.append(f"原始工具输出摘要记录失败：{exc}")

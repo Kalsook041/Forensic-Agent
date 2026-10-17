@@ -2,12 +2,17 @@ import json
 from pathlib import Path
 import re
 
-from ..evidence.store import write_json
+from ..evidence.store import utc_now, write_json
 from ..evidence.values import evidence_value, supports_answer
 from ..models import MAX_QUESTION_CHARS, ToolRequest
 from ..tools.registry import catalog, validate_request
 from ..tools.runner import run_tool
 from .ollama import OllamaClient
+
+
+CONTINUABLE_STATES = {"ready", "completed", "completed_without_model", "insufficient_evidence",
+    "model_failed", "model_unavailable", "tool_failed", "stopped_budget", "stopped_duplicate",
+    "stopped_no_progress", "cancelled"}
 
 
 def validate_claims(case, claims):
@@ -50,6 +55,90 @@ def request_signature(request):
         effective = request.params
     return json.dumps({"tool_id": request.tool_id, "source_id": request.source_id,
                        "params": effective}, sort_keys=True, ensure_ascii=False)
+
+
+def existing_request_signatures(case):
+    """Return audited effective requests, including requests made before a continuation."""
+    signatures = set()
+    for step in case.manifest.get("steps", []):
+        try:
+            signatures.add(request_signature(ToolRequest.model_validate(step["request"])))
+        except (KeyError, TypeError, ValueError):
+            # The original malformed entry stays in the operation log.  It must
+            # not prevent reading a case, but it is never reinterpreted here.
+            continue
+    return signatures
+
+def repair_budgets(case):
+    """Keep one-shot correction budgets across a resumed investigation.
+
+    Older cases have response files but no persistent budget field.  Infer only
+    that narrow compatibility default, then record all new uses in the manifest.
+    """
+    budgets = case.manifest.setdefault("repair_budgets", {})
+    for name, suffix in (("decision", "-decision-repair.json"), ("claim", "-claim-repair.json")):
+        used = any(case.directory.glob(f"model-*{suffix}")) or any(
+            case.directory.glob(f"model-*{suffix[:-5]}-failed.json"))
+        budgets[name] = bool(budgets.get(name) or used)
+    return budgets
+
+def audit_path(case, name):
+    """Allocate a fresh audit filename without overwriting a prior model response."""
+    path = case.directory / name
+    index = 1
+    while path.exists() or path.with_name(path.stem + "-failed.json").exists():
+        path = case.directory / f"{Path(name).stem}-resume{index:03d}.json"
+        index += 1
+    return path
+
+def tool_budget(case):
+    runs = case.manifest.get("analysis_runs", [])
+    return runs[-1]["tool_limit"] if runs else case.settings.model.max_steps
+
+def prepare_continuation(case):
+    """Verify an existing case before allowing more analysis without a new copy."""
+    state = case.manifest.get("state")
+    if state not in CONTINUABLE_STATES:
+        raise ValueError(f"案件状态 {state!r} 不能继续；请先查看登记或完整性错误")
+    if not case.sources or case.manifest.get("root_id") not in case.sources:
+        raise ValueError("案件没有完整登记的根检材，不能复用工作副本")
+    if any("result" not in step or step.get("state") == "running" for step in case.manifest.get("steps", [])):
+        raise ValueError("案件含未完成的工具步骤，不能在不完整记录上继续")
+
+    repair_budgets(case)
+    entry = {"requested_utc": utc_now(), "prior_state": state, "mode": "reuse_snapshot"}
+    check = case.record_integrity("resume")
+    if check["issues"]:
+        entry["outcome"] = "integrity_failed"
+        case.manifest.setdefault("continuations", []).append(entry)
+        case.save()
+        return False
+
+    # Keep the prior rendered report as well as its source evidence and answers.
+    from ..evidence.paths import local_path, within
+    reports = {}
+    for name in ("report.md", "report.json"):
+        path = case.directory / name
+        if path.exists():
+            path = local_path(path)
+            if not within(path, case.directory):
+                raise ValueError("历史报告路径越界")
+            reports[name] = path.read_bytes()
+    if reports:
+        history = case.directory / "report-history" / f"continuation-{len(case.manifest.get('continuations', [])) + 1:04d}"
+        local_path(history, must_exist=False)
+        history.mkdir(parents=True, exist_ok=False)
+        for name, content in reports.items():
+            (history / name).write_bytes(content)
+        entry["prior_reports"] = str(history.relative_to(case.directory))
+    if case.manifest.get("answers"):
+        case.invalidate_answers("用户请求继续案件调查；后续结论将替代当前候选答案")
+    entry["outcome"] = "ready"
+    case.manifest.setdefault("continuations", []).append(entry)
+    case.manifest["state"] = "ready"
+    case.manifest["warnings"].append("已核验原件、工作副本和已记录工具输出；复用已有副本继续调查")
+    case.save()
+    return True
 
 
 def compact_messages(case):
@@ -129,7 +218,7 @@ def compact_messages(case):
     user = {"question": case.manifest["question"], "root_id": case.manifest["root_id"],
             "sources": sources, "observations": observations,
             "suggested_tool": workflow_id,
-            "remaining_tool_calls": case.settings.model.max_steps - len(case.manifest["steps"])}
+            "remaining_tool_calls": tool_budget(case) - len(case.manifest["steps"])}
     # Reserve context for JSON and response; pruning always preserves valid JSON.
     while len(json.dumps(user, ensure_ascii=False).encode("utf-8")) > 5500:
         if len(user["sources"]) > 3:
@@ -185,8 +274,17 @@ def analyze(case, *, no_model=False, client=None, progress=None):
         case.manifest["warnings"].append(f"题目长度应为 1..{MAX_QUESTION_CHARS} 字符，请拆分；未截断题目")
         case.save()
         return
+    case.manifest.setdefault("analysis_runs", []).append({"started_utc": utc_now(),
+        "start_step_count": len(case.manifest["steps"]),
+        "tool_limit": len(case.manifest["steps"]) + case.settings.model.max_steps})
+    case.save()
     if no_model:
         request = rule_request(case)
+        if request_signature(request) in existing_request_signatures(case):
+            case.manifest["state"] = "stopped_duplicate"
+            case.manifest["warnings"].append("规则模式请求与既有案件步骤等价，未重复执行；请改用模型继续调查或选择新的受支持工具")
+            case.save()
+            return
         case.manifest["plan"] = [f"规则模式选择 {request.tool_id}，读取工具证据并生成报告"]
         case.manifest["warnings"].append("本次为显式无模型规则模式，未使用语言模型规划；不自动推断复杂答案")
         if progress:
@@ -198,14 +296,17 @@ def analyze(case, *, no_model=False, client=None, progress=None):
         return
     own_client = client is None
     client = client or OllamaClient(case.settings.model)
-    seen = set()
+    seen = existing_request_signatures(case)
     stagnant = 0
-    evidence_seen = set()
-    decision_repair_used = False
+    evidence_seen = {json.dumps({"source": row["source_id"], "locator": row["locator"], "data": row["data"]},
+                                ensure_ascii=False, sort_keys=True)
+                     for step in case.manifest.get("steps", []) for row in step.get("evidence", [])}
+    budgets = repair_budgets(case)
+    decision_repair_used = budgets["decision"]
     try:
         case.manifest["model"] = client.discover()
         case.save()
-        while len(case.manifest["steps"]) < case.settings.model.max_steps:
+        while len(case.manifest["steps"]) < tool_budget(case):
             # Unsupported tool/source pairs cannot be selected again by the real model grammar.
             # Runtime validation and duplicate detection still apply to all clients.
             unsupported = {(step["request"]["tool_id"], step["request"]["source_id"])
@@ -220,13 +321,14 @@ def analyze(case, *, no_model=False, client=None, progress=None):
             messages = compact_messages(case)
             decision = None
             for attempt in range(2):
+                response_path = audit_path(case, f"model-{len(case.manifest['steps']) + 1:03d}-{attempt}.json")
                 try:
                     decision, raw = client.decide(messages)
-                    write_json(case.directory / f"model-{len(case.manifest['steps']) + 1:03d}-{attempt}.json",
+                    write_json(response_path,
                                {"messages": messages, "response": raw})
                     break
                 except Exception as exc:
-                    write_json(case.directory / f"model-{len(case.manifest['steps']) + 1:03d}-{attempt}-failed.json",
+                    write_json(response_path.with_name(response_path.stem + "-failed.json"),
                                {"messages": messages, "error": str(exc)[:4000],
                                 "response": getattr(client, "last_response", None)})
                     case.manifest["warnings"].append(f"模型响应失败（尝试 {attempt + 1}）：{type(exc).__name__}: {exc}")
@@ -252,12 +354,14 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                         case.manifest["state"] = "stopped_duplicate"
                         break
                     decision_repair_used = True
+                    budgets["decision"] = True
+                    case.save()
                     feedback = {"rejected_request": request.model_dump(mode="json"), "instruction":
                         "这个请求与已执行请求等价（包含默认参数），不会再次执行。只允许一次重新决策："
                         "已有observations能回答就返回finish并逐字引用证据；否则选择确有新增信息的工具/筛选/下一页。"
                         "若仍无依据，finish并说明不足。不得猜测答案或重复相同请求。"}
                     messages = [*messages, {"role": "user", "content": json.dumps(feedback, ensure_ascii=False)}]
-                    repair_path = case.directory / f"model-{len(case.manifest['steps']) + 1:03d}-decision-repair.json"
+                    repair_path = audit_path(case, f"model-{len(case.manifest['steps']) + 1:03d}-decision-repair.json")
                     repaired = None
                     if progress:
                         progress("重复工具请求未执行，允许一次重新决策")
@@ -290,12 +394,19 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                 # Keep the original rejection and response as audit evidence.
                 if errors:
                     case.manifest["warnings"].extend(errors)
+                    if budgets["claim"]:
+                        case.manifest["warnings"].append("引用纠正预算已在本案件此前分析中使用；未再次调用模型")
+                        case.manifest["answers"] = answers
+                        case.manifest["state"] = "completed" if answers else "insufficient_evidence"
+                        break
+                    budgets["claim"] = True
+                    case.save()
                     feedback = {"validation_errors": errors[:8], "instruction":
                         "引用校验失败。仅允许一次纠正：返回action=finish，核对已有observations中的证据ID、"
                         "data字段及原值。SQL列名不是data字段；例如data.values=[3]应引用values[0]。"
                         "不允许新工具调用；不能证实的claim请删除。"}
                     repair_messages = [*messages, {"role": "user", "content": json.dumps(feedback, ensure_ascii=False)}]
-                    repair_path = case.directory / f"model-{len(case.manifest['steps']) + 1:03d}-claim-repair.json"
+                    repair_path = audit_path(case, f"model-{len(case.manifest['steps']) + 1:03d}-claim-repair.json")
                     if progress:
                         progress("证据引用未通过校验，允许一次纠正")
                     try:

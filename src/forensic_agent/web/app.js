@@ -45,7 +45,13 @@ function renderCases(cases) {
   $("case-count").textContent = cases.length;
   $("case-list").replaceChildren();
   if (!cases.length) { const p = document.createElement("p"); p.className = "help"; p.textContent = "尚无案件。完成一次分析后会显示在这里。"; $("case-list").append(p); }
-  for (const item of cases) { const button = document.createElement("button"); button.type = "button"; button.className = "case-item"; const title = document.createElement("strong"), detail = document.createElement("small"); title.textContent = item.question; detail.textContent = `${states[item.state] || item.state} · ${item.id}`; button.append(title, detail); button.addEventListener("click", () => { if (busy) return notice("请等待当前任务结束后再打开历史报告。"); showReport(item.id).catch(e => notice(e.message)); }); $("case-list").append(button); }
+  for (const item of cases) { const row = document.createElement("div"), view = document.createElement("button"), resume = document.createElement("button"); row.className = "case-row"; view.type = "button"; view.className = "case-item"; const title = document.createElement("strong"), detail = document.createElement("small"); title.textContent = item.question; detail.textContent = `${states[item.state] || item.state} · ${item.id}`; view.append(title, detail); view.addEventListener("click", () => { if (busy) return notice("请等待当前任务结束后再打开历史报告。"); showReport(item.id).catch(e => notice(e.message)); }); resume.type = "button"; resume.className = "case-resume"; resume.textContent = "继续分析"; resume.disabled = !item.can_continue; resume.title = item.can_continue ? "核验已有原件和工作副本后继续，不复制检材" : "该案件没有可继续使用的完整副本"; resume.addEventListener("click", () => continueCase(item.id)); row.append(view, resume); $("case-list").append(row); }
+}
+function continueCase(id) {
+  if (busy) return notice("请等待当前任务结束后再继续案件。");
+  const mode = $("execution-mode").value;
+  if (mode === "tool") return notice("继续案件请先选择“自动选择工具”或“规则模式”。");
+  start({action:"continue", case:id, mode});
 }
 function inline(parent, text) {
   for (const part of text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g)) { const tag = part.startsWith("`") && part.endsWith("`") ? "code" : part.startsWith("**") && part.endsWith("**") ? "strong" : null; if (tag) { const el = document.createElement(tag); el.textContent = part.slice(tag === "code" ? 1 : 2, tag === "code" ? -1 : -2); parent.append(el); } else parent.append(document.createTextNode(part)); }
@@ -146,7 +152,7 @@ async function start(data) {
     const result = await api("/api/start", data);
     currentCase = null; currentReport = ""; $("report-actions").hidden = true; $("report").hidden = true; $("report-meta").hidden = true; $("diagnostics").hidden = true; $("empty-state").hidden = true;
     ++manualRequest; ++reportRequest; manualText = ""; manualCase = null; $("manual-panel").hidden = true; $("manual-download").disabled = true;
-    $("output-title").textContent = data.action === "doctor" ? "环境检查" : "分析结果";
+    $("output-title").textContent = data.action === "doctor" ? "环境检查" : data.action === "continue" ? "继续案件" : "分析结果";
     $("progress-panel").open = true;
     await renderTask(result.task);
   } catch (error) { notice(error.message); setBusy(false); }

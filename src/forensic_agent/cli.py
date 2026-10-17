@@ -1,9 +1,10 @@
 import argparse
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import sys
 
-from .agent.loop import analyze
+from .agent.loop import analyze, prepare_continuation
 from .doctor import find_tools, inspect_environment
 from .evidence import Case
 from .models import MAX_QUESTION_CHARS, ToolRequest
@@ -34,14 +35,35 @@ def main(argv=None):
     tool.add_argument("--params", default="{}", help="工具参数 JSON")
     analysis = subparsers.add_parser("analyze", help="输入自然语言题目，进行有限调查")
     analysis.add_argument("--evidence", type=Path)
+    analysis.add_argument("--case", type=Path, help="继续已登记案件；复用其工作副本且不接受新题目")
     analysis.add_argument("--question")
     analysis.add_argument("--no-model", action="store_true", help="明确使用简单规则流程，不使用模型")
+    analysis.add_argument("--progress", action="store_true", help="逐条输出进度 JSON（工作台使用）")
     report = subparsers.add_parser("report", help="重新生成已有案件的中文报告")
     report.add_argument("case", type=Path)
     args = parser.parse_args(argv)
     case = None
+    operations = ExitStack()
+    operation_started = False
+    continuation_setup = False
+
+    def lock_case(target):
+        nonlocal operation_started
+        operations.enter_context(target.exclusive_operation())
+        operation_started = True
     try:
         settings = load_settings(args.config)
+
+        def progress(value):
+            if isinstance(value, dict):
+                event = value.get("event", "progress")
+                stage = value.get("stage", "处理")
+                elapsed = value.get("elapsed_seconds")
+                suffix = f"（{elapsed:.1f} 秒）" if isinstance(elapsed, (int, float)) else ""
+                display({"progress": f"{stage}：{event}{suffix}", "progress_event": value})
+            else:
+                display({"progress": str(value)})
+
         # Discovery selects only fixed supported programs; it never adds arbitrary executables to the registry.
         for key, value in find_tools(settings).items():
             if value:
@@ -54,12 +76,14 @@ def main(argv=None):
             return 0
         if args.command == "report":
             case = Case(args.case, settings)
+            lock_case(case)
             display({"report": str(generate_report(case))})
             return 2 if case.manifest["state"] == "evidence_changed" else 0
         if args.command == "tool":
             if bool(args.evidence) == bool(args.case):
                 raise ValueError("--evidence 与 --case 必须选择且只能选择一个")
             case = Case(args.case, settings) if args.case else Case.create(args.evidence, settings)
+            lock_case(case)
             step = run_tool(case, ToolRequest(tool_id=args.tool_id, source_id=args.source_id,
                                               params=json.loads(args.params)))
             if case.manifest["state"] != "evidence_changed":
@@ -71,21 +95,40 @@ def main(argv=None):
                      "records": len(step["evidence"]), "error": step["result"]["error"],
                      "warnings": step["result"]["warnings"], "report": str(report_path)})
             return 0 if step["result"]["status"] in {"ok", "partial"} and case.manifest["state"] != "evidence_changed" else 2
-        evidence = args.evidence or Path(input("检材文件或目录的本地路径：").strip().strip('"'))
-        question = args.question or input("请输入取证题目：").strip()
-        if not question or len(question) > MAX_QUESTION_CHARS:
-            raise ValueError(f"题目长度应为 1..{MAX_QUESTION_CHARS} 字符，请拆分；不会截断尾部约束")
-        case = Case.create(evidence, settings, question)
-        analyze(case, no_model=args.no_model, progress=lambda line: display({"progress": line}))
+        if args.evidence and args.case:
+            raise ValueError("analyze 的 --evidence 与 --case 不能同时指定")
+        if args.case:
+            if args.question:
+                raise ValueError("继续案件使用其已保存题目；不接受 --question，以免混淆案件记录")
+            case = Case(args.case, settings, progress=progress if args.progress else None)
+            lock_case(case)
+            continuation_setup = True
+            prepared = prepare_continuation(case)
+            continuation_setup = False
+            if not prepared:
+                report_path = generate_report(case)
+                display({"case": str(case.directory), "state": case.manifest["state"], "reused": True,
+                         "continued": False, "report": str(report_path), "warnings": case.manifest["warnings"]})
+                return 2
+        else:
+            evidence = args.evidence or Path(input("检材文件或目录的本地路径：").strip().strip('"'))
+            question = args.question or input("请输入取证题目：").strip()
+            if not question or len(question) > MAX_QUESTION_CHARS:
+                raise ValueError(f"题目长度应为 1..{MAX_QUESTION_CHARS} 字符，请拆分；不会截断尾部约束")
+            case = Case.create(evidence, settings, question, progress=progress if args.progress else None)
+            lock_case(case)
+        analyze(case, no_model=args.no_model, progress=progress if args.progress else None)
         report_path = generate_report(case)
-        display({"case": str(case.directory), "state": case.manifest["state"],
+        display({"case": str(case.directory), "state": case.manifest["state"], "reused": bool(args.case),
+                 "continued": bool(args.case),
                  "report": str(report_path), "warnings": case.manifest["warnings"]})
         return 0 if case.manifest["state"] in {"completed", "completed_without_model"} else 2
     except KeyboardInterrupt:
-        if case:
+        if case and operation_started:
             case.manifest["state"] = "cancelled"
             case.save()
-            generate_report(case, verify_integrity=False)
+            if not continuation_setup:
+                generate_report(case, verify_integrity=False)
         print("已取消；工作进程树已终止，原件未作为写入目标。", file=sys.stderr)
         return 130
     except Exception as exc:
@@ -98,15 +141,18 @@ def main(argv=None):
                 case = Case(Path(failed_directory), settings)
             except Exception as load_error:
                 result["report_error"] = f"无法读取失败案件：{type(load_error).__name__}: {load_error}"
-        if case:
-            try:
-                result["report"] = str(generate_report(case))
-            except Exception as report_error:
-                result["report_error"] = f"{type(report_error).__name__}: {report_error}"
+        if case and (operation_started or getattr(exc, "case_directory", None)):
+            if not continuation_setup:
+                try:
+                    result["report"] = str(generate_report(case))
+                except Exception as report_error:
+                    result["report_error"] = f"{type(report_error).__name__}: {report_error}"
             result["state"] = case.manifest["state"]
             result["warnings"] = case.manifest["warnings"]
         display(result)
         return 2
+    finally:
+        operations.close()
 
 
 if __name__ == "__main__":

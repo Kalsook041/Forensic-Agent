@@ -171,6 +171,51 @@ def test_direct_tool_args_preserve_chinese_and_json(workspace, tmp_path):
     assert str(evidence) in args
 
 
+def test_continue_command_reuses_an_existing_case_without_evidence(workspace, tmp_path):
+    from forensic_agent.evidence import Case
+
+    evidence = tmp_path / "线索.txt"
+    evidence.write_text("SECRET", encoding="utf-8")
+    case = Case.create(evidence, workspace.settings, '搜索关键词 "SECRET"')
+
+    args = workspace.command({"action": "continue", "case": case.manifest["case_id"], "mode": "model"})
+
+    assert args[args.index("analyze") + 1:args.index("analyze") + 3] == ["--case", str(case.directory)]
+    assert str(evidence) not in args
+    assert "--question" not in args and "--evidence" not in args
+    with pytest.raises(ValueError, match="只支持自动规划或规则模式"):
+        workspace.command({"action": "continue", "case": case.manifest["case_id"], "mode": "tool"})
+
+
+def test_rules_continuation_verifies_then_reuses_same_snapshot(server, tmp_path):
+    from forensic_agent.evidence import Case
+
+    evidence = tmp_path / "continuation.txt"
+    evidence.write_text("SECRET-GUI-CONTINUATION", encoding="utf-8")
+    case = Case.create(evidence, server.workspace.settings, '搜索关键词 "SECRET"')
+    snapshot = case.sources["s00001"].working_path
+    original = evidence.read_bytes()
+
+    with request(server, "/api/start", {"action": "continue", "case": case.manifest["case_id"], "mode": "rules"}) as response:
+        assert response.status == 202
+    deadline = time.monotonic() + 40
+    while time.monotonic() < deadline:
+        with request(server, "/api/task") as response:
+            task = json.load(response)["task"]
+        if task["status"] != "running":
+            break
+        time.sleep(.1)
+
+    assert task["status"] == "completed", task
+    assert task["result"]["continued"] is True
+    assert task["result"]["state"] == "completed_without_model"
+    updated = Case(case.directory, server.workspace.settings)
+    assert updated.sources["s00001"].working_path == snapshot
+    assert evidence.read_bytes() == original
+    assert updated.manifest["continuations"][-1]["outcome"] == "ready"
+    assert [phase["stage"] for phase in updated.manifest["phases"]].count("copy_snapshot") == 1
+
+
 def test_malformed_body(server):
     req = Request(server.origin + "/api/start", data=b"[]", headers={
         "X-Session-Token": server.workspace.token, "Content-Type": "application/json"})

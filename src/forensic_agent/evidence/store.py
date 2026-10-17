@@ -1,14 +1,17 @@
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
+from time import monotonic
 import uuid
 
 from ..models import MAX_QUESTION_CHARS, Source
 from ..settings import Settings
 from .paths import is_reparse, local_path, within
+from . import progress as phase_progress
 
 
 def utc_now() -> str:
@@ -17,9 +20,11 @@ def utc_now() -> str:
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
+    phase_progress.note_hash_pass()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
+            phase_progress.note_hash_bytes(len(chunk))
     return digest.hexdigest()
 
 
@@ -33,20 +38,58 @@ def write_json(path: Path, value) -> None:
 SQLITE_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
+class CaseBusyError(ValueError):
+    pass
+
+
 def is_sqlite(path: Path):
     with path.open("rb") as stream:
         return stream.read(16) == b"SQLite format 3\x00"
 
 
 class Case:
-    def __init__(self, directory: Path, settings: Settings):
+    def __init__(self, directory: Path, settings: Settings, progress=None):
         self.directory = local_path(directory)
         self.settings = settings
+        self.progress_callback = progress
         self.manifest = json.loads((directory / "case.json").read_text(encoding="utf-8"))
         self.sources = {x["id"]: Source.model_validate(x) for x in self.manifest["sources"]}
 
+    @contextmanager
+    def exclusive_operation(self):
+        """Serialize CLI writers; OS releases the lock when a process exits."""
+        lock_path = local_path(self.directory / ".operation.lock", must_exist=False)
+        with lock_path.open("a+b") as stream:
+            if not stream.tell():
+                stream.write(b"0")
+                stream.flush()
+            stream.seek(0)
+            if os.name == "nt":
+                import msvcrt
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError as exc:
+                    raise CaseBusyError("该案件已有操作正在执行，请等待其结束") from exc
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as exc:
+                    raise CaseBusyError("该案件已有操作正在执行，请等待其结束") from exc
+            try:
+                # A prior operation may have finished after this instance loaded.
+                self.manifest = json.loads((self.directory / "case.json").read_text(encoding="utf-8"))
+                self.sources = {x["id"]: Source.model_validate(x) for x in self.manifest["sources"]}
+                yield
+            finally:
+                stream.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
     @classmethod
-    def create(cls, evidence: Path, settings: Settings, question: str = ""):
+    def create(cls, evidence: Path, settings: Settings, question: str = "", progress=None):
         if len(question) > MAX_QUESTION_CHARS:
             raise ValueError(f"题目最多 {MAX_QUESTION_CHARS} 字符，请拆分题目；不会截断尾部约束")
         source = local_path(evidence)
@@ -65,10 +108,12 @@ class Case:
                     "question": question, "input_path": str(source), "root_id": "s00001", "sources": [], "steps": [],
                     "warnings": [], "answers": [], "state": "intake", "settings": settings.model_dump(mode="json")}
         write_json(directory / "case.json", manifest)
-        case = cls(directory, settings)
+        case = cls(directory, settings, progress=progress)
         try:
-            case._snapshot(source)
-            issues = case.verify_originals()
+            with case.phase("copy_snapshot"):
+                case._snapshot(source)
+            with case.phase("verify_originals"):
+                issues = case.verify_originals()
             if issues:
                 raise ValueError("检材在复制期间变化或不可复核：" + "; ".join(issues))
             case.manifest["state"] = "ready"
@@ -80,6 +125,47 @@ class Case:
             case.save()
             exc.case_directory = str(directory)
             raise
+
+    def _phase_event(self, record: dict, event: str) -> None:
+        if self.progress_callback is None:
+            return
+        payload = {"type": "phase_progress", "event": event, "phase_id": record["id"],
+                   "stage": record["stage"], "elapsed_seconds": record.get("elapsed_seconds", 0.0),
+                   "hash_bytes": record["hash_bytes"], "hash_passes": record["hash_passes"],
+                   "copy_bytes": record["copy_bytes"], "details": record["details"]}
+        try:
+            self.progress_callback(payload)
+        except Exception:
+            # UI/CLI observation cannot alter intake, parsing, or the first error.
+            pass
+
+    @contextmanager
+    def phase(self, stage: str, **details):
+        record = {"id": f"phase{len(self.manifest.setdefault('phases', [])) + 1:04d}", "stage": stage,
+                  "started_utc": utc_now(), "details": details, "hash_bytes": 0, "hash_passes": 0,
+                  "copy_bytes": 0, "status": "running"}
+        self.manifest["phases"].append(record)
+        started = monotonic()
+        token = phase_progress.activate(record, lambda _: self._phase_event(record, "progress"))
+        self._phase_event(record, "start")
+        try:
+            yield record
+        except BaseException:
+            record["status"] = "failed"
+            raise
+        else:
+            record["status"] = "finished"
+        finally:
+            record["finished_utc"] = utc_now()
+            record["elapsed_seconds"] = round(monotonic() - started, 6)
+            phase_progress.deactivate(token)
+            self._phase_event(record, "end")
+            try:
+                self.save()
+            except Exception:
+                # Phase telemetry is supplementary. Existing explicit saves still
+                # surface their own failures at the relevant forensic operation.
+                pass
 
     def _snapshot(self, source: Path):
         total = 0
@@ -141,6 +227,7 @@ class Case:
             target.parent.mkdir(parents=True, exist_ok=True)
             before = original.stat()
             digest = hashlib.sha256()
+            phase_progress.note_hash_pass()
             count = 0
             with original.open("rb") as src, target.open("xb") as dst:
                 while chunk := src.read(1024 * 1024):
@@ -149,6 +236,8 @@ class Case:
                         raise OSError("源文件增长或工作磁盘余量不足")
                     digest.update(chunk)
                     dst.write(chunk)
+                    phase_progress.note_hash_bytes(len(chunk))
+                    phase_progress.note_copy_bytes(len(chunk))
             after = original.stat()
             if count != size or (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                 raise ValueError(f"复制期间源文件变化：{original}")
@@ -269,7 +358,25 @@ class Case:
             self.manifest["answers"] = []
 
     def record_integrity(self, stage):
-        check = {"stage": stage, "verified_utc": utc_now(), "issues": self.verify_current()}
+        with self.phase(f"integrity_{stage}", integrity_stage=stage):
+            issues = self.verify_current()
+            root = self.sources.get(self.manifest.get("root_id"))
+            if stage == "resume" and root and root.kind == "directory" and root.original_path:
+                try:
+                    original_root = local_path(root.original_path)
+                    expected = {local_path(item.original_path) for item in self.sources.values()
+                                if item.kind == "file" and item.original_path}
+                    current_files = set()
+                    for current, dirs, names in os.walk(original_root, followlinks=False):
+                        current = Path(current)
+                        dirs[:] = [name for name in dirs if not is_reparse(current / name)]
+                        current_files.update(local_path(current / name) for name in names
+                                             if not is_reparse(current / name) and (current / name).is_file())
+                    if current_files != expected:
+                        issues.append("原件目录文件集合变化，不能继续复用已登记副本")
+                except (OSError, ValueError) as exc:
+                    issues.append(f"原件目录集合无法复核：{exc}")
+        check = {"stage": stage, "verified_utc": utc_now(), "issues": issues}
         self.manifest.setdefault("integrity_checks", []).append(check)
         if check["issues"]:
             self.invalidate_answers("当前完整性复核未通过")

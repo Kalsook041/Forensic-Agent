@@ -68,10 +68,13 @@ textarea { resize:vertical; min-height:118px; line-height:1.75; }
 summary { cursor:pointer; font-size:13px; font-weight:600; }
 .history summary span { color:var(--muted); font-weight:400; margin-left:8px; font-variant-numeric:tabular-nums; }
 #case-list { margin-top:12px; max-height:260px; overflow:auto; }
-.case-item { display:block; text-align:left; width:100%; border-bottom:1px solid var(--line); padding:10px 2px; background:transparent; color:var(--ink); }
+.case-row { display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--line); }
+.case-item { display:block; text-align:left; flex:1; min-width:0; border:0; padding:10px 2px; background:transparent; color:var(--ink); }
 .case-item:hover { color:var(--accent); background:var(--accent-tint); }
 .case-item strong { display:block; font-size:12px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .case-item small { display:block; font-size:10px; color:var(--muted); overflow-wrap:anywhere; }
+.case-resume { flex:none; white-space:nowrap; font-size:11px; padding:5px 7px; border:1px solid var(--line); border-radius:5px; color:var(--accent); background:#fff; }
+.case-resume:disabled { color:var(--muted); cursor:not-allowed; }
 .output { min-width:0; display:flex; flex-direction:column; border-top:1px solid var(--line); }
 .output-toolbar { padding:22px 28px; min-height:70px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .status { display:inline-flex; align-items:center; gap:7px; font-size:12px; color:var(--muted); border-radius:5px; background:#eef1f5; padding:3px 9px; }

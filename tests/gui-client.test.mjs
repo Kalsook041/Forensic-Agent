@@ -62,6 +62,15 @@ test('sample restores model planning even after a rules selection', async () => 
   assert.equal(requests[0].mode, 'model');
 });
 
+test('continue sends only a case identity and selected planning mode', async () => {
+  const {node,context,requests} = await readyClient();
+  node('execution-mode').value = 'rules';
+  vm.runInContext('continueCase("case-48g")', context);
+  await settle();
+  assert.deepEqual(requests, [{action:'continue',case:'case-48g',mode:'rules'}]);
+  assert.equal(node('output-title').textContent, '继续案件');
+});
+
 test('missing failure report preserves the intake cause and displays diagnostics', async () => {
   const {node,context} = await readyClient();
   context.fetch = async url => ({
