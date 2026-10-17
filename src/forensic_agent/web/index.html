@@ -58,7 +58,16 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
         </fieldset>
       </form>
       <button id="manual-guide" type="button" class="text-button">通用人工操作指南 · 工具与处理步骤</button>
-      <details class="history"><summary>历史案件 <span id="case-count">0</span></summary><p class="help">可打开报告，或先核验原件与已有副本后继续分析；继续不会复制检材。</p><div id="case-list"><p class="help">尚无案件。完成一次分析后会显示在这里。</p></div></details>
+      <details class="history"><summary>历史案件 <span id="case-count">0</span></summary><p class="help">继续当前题目，或添加下一道题；核验后复用同一副本，不再复制检材。历史题目可分别打开报告。</p><div id="case-list"><p class="help">尚无案件。完成一次分析后会显示在这里。</p></div></details>
+      <section id="next-question-panel" class="next-question-panel" hidden aria-labelledby="next-question-title">
+        <h3 id="next-question-title">同一检材 · 添加新题</h3><p id="next-question-case" class="help"></p>
+        <p class="help">先核验已有检材，复用副本与证据；上一题的答案和报告单独保存。执行方式沿用高级选项中的设置。</p>
+        <form id="next-question-form"><fieldset id="next-question-fields">
+          <label for="next-question">新题目（最多1000字符）</label>
+          <textarea id="next-question" required rows="4" placeholder="输入下一道题，不需要再次选择检材路径"></textarea>
+          <div class="file-actions"><button type="submit" class="primary">复用副本分析新题</button><button type="button" id="cancel-next-question" class="secondary">取消</button></div>
+        </fieldset></form>
+      </section>
     </section>
     <section class="output" id="output" aria-labelledby="output-title" hidden>
       <div class="output-toolbar"><h2 id="output-title">分析结果</h2><span id="task-status" class="status" role="status">等待开始</span></div>

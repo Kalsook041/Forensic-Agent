@@ -141,6 +141,35 @@ def prepare_continuation(case):
     return True
 
 
+def prepare_next_question(case, question):
+    """Start a distinct question after verifying the same registered evidence."""
+    if not isinstance(question, str) or not 1 <= len(question.strip()) <= MAX_QUESTION_CHARS:
+        raise ValueError(f"新题目长度应为 1..{MAX_QUESTION_CHARS} 字符；不会截断题目")
+    question = question.strip()
+    if question == case.manifest.get("question", "").strip():
+        raise ValueError("题目与当前题目相同，请使用继续当前题目")
+    old = {key: json.loads(json.dumps(case.manifest.get(key, default), ensure_ascii=False))
+           for key, default in (("question", ""), ("state", "ready"), ("plan", []),
+                                ("answers", []), ("historical_answers", []), ("reused_step_ids", []))}
+    old["id"] = case.manifest.get("question_id", "q0001")
+    old["step_ids"] = [step["id"] for step in case.manifest["steps"]
+                       if step.get("question_id", "q0001") == old["id"]]
+    if not prepare_continuation(case):
+        return False
+    entry = case.manifest["continuations"][-1]
+    old["report_directory"] = entry.get("prior_reports")
+    old["archived_utc"] = utc_now()
+    history = case.manifest.setdefault("question_history", [])
+    history.append(old)
+    question_id = f"q{len(history) + 1:04d}"
+    case.manifest.update(question_id=question_id, question=question, plan=[], answers=[],
+                         historical_answers=[], reused_step_ids=[])
+    entry.update(mode="new_question", question_id=question_id, prior_question_id=old["id"])
+    case.manifest["warnings"].append(f"已添加题目 {question_id}，沿用同一检材副本；既有证据需按新题重新判断")
+    case.save()
+    return True
+
+
 def compact_messages(case):
     available = catalog(case.settings, for_model=True)
     specs = {}
@@ -275,12 +304,24 @@ def analyze(case, *, no_model=False, client=None, progress=None):
         case.save()
         return
     case.manifest.setdefault("analysis_runs", []).append({"started_utc": utc_now(),
+        "question_id": case.manifest.get("question_id", "q0001"),
         "start_step_count": len(case.manifest["steps"]),
         "tool_limit": len(case.manifest["steps"]) + case.settings.model.max_steps})
     case.save()
     if no_model:
         request = rule_request(case)
         if request_signature(request) in existing_request_signatures(case):
+            reusable = [step["id"] for step in case.manifest["steps"]
+                        if request_signature(ToolRequest.model_validate(step["request"])) == request_signature(request)
+                        and step.get("question_id", "q0001") != case.manifest.get("question_id", "q0001")
+                        and step["result"]["status"] in {"ok", "partial"} and not step["integrity"]["issues"]]
+            if reusable:
+                case.manifest["reused_step_ids"] = list(dict.fromkeys([
+                    *case.manifest.get("reused_step_ids", []), *reusable]))
+                case.manifest["state"] = "completed_without_model"
+                case.manifest["warnings"].append("新题规则请求已有经核验的工具结果，已复用证据；未再次执行工具或自动推断答案")
+                case.save()
+                return
             case.manifest["state"] = "stopped_duplicate"
             case.manifest["warnings"].append("规则模式请求与既有案件步骤等价，未重复执行；请改用模型继续调查或选择新的受支持工具")
             case.save()

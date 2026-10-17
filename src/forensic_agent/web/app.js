@@ -4,6 +4,7 @@ const token = document.querySelector('meta[name="session-token"]').content;
 let tools = {}, currentCase = null, currentReport = "", modelName = "本地模型", maxQuestion = 1000;
 let busy = false, finishedTask = null, polling = false, stopped = false;
 let manualText = "", manualCase = null, manualRequest = 0, reportRequest = 0;
+let nextQuestionCase = null;
 const names = {inventory:"文件清单与类型",hash:"SHA256 哈希",search:"文本搜索",metadata:"文件元数据",archive:"压缩包",pcap:"网络流量",sqlite:"SQLite 数据库",evtx:"Windows 事件日志",evtxecmd:"EZTools 事件日志"};
 const defaults = {search:{keyword:"FLAG"},metadata:{fields:["Author"]},archive:{action:"list"},pcap:{protocol:"overview"},sqlite:{query:"schema"}};
 const states = {completed:"分析完成",completed_without_model:"规则模式完成",tool_completed:"工具完成",evidence_changed:"完整性检查未通过",insufficient_evidence:"证据不足",model_unavailable:"模型不可用",tool_failed:"工具失败",model_failed:"模型响应失败",cancelled:"已取消",ready:"已登记",intake_failed:"检材登记失败",stopped_budget:"达到步数上限",stopped_duplicate:"重复调用已停止",stopped_no_progress:"无新增证据已停止"};
@@ -18,6 +19,7 @@ async function api(path, data) {
 }
 function setBusy(value) {
   busy = value; $("input-fields").disabled = value; $("doctor").disabled = value;
+  $("next-question-fields").disabled = value;
   $("shutdown").disabled = value; $("verify").disabled = value;
   $("start").querySelector("span").textContent = value ? "正在执行，请稍候…" : $("execution-mode").value === "tool" ? "运行指定工具" : "开始分析";
 }
@@ -45,7 +47,31 @@ function renderCases(cases) {
   $("case-count").textContent = cases.length;
   $("case-list").replaceChildren();
   if (!cases.length) { const p = document.createElement("p"); p.className = "help"; p.textContent = "尚无案件。完成一次分析后会显示在这里。"; $("case-list").append(p); }
-  for (const item of cases) { const row = document.createElement("div"), view = document.createElement("button"), resume = document.createElement("button"); row.className = "case-row"; view.type = "button"; view.className = "case-item"; const title = document.createElement("strong"), detail = document.createElement("small"); title.textContent = item.question; detail.textContent = `${states[item.state] || item.state} · ${item.id}`; view.append(title, detail); view.addEventListener("click", () => { if (busy) return notice("请等待当前任务结束后再打开历史报告。"); showReport(item.id).catch(e => notice(e.message)); }); resume.type = "button"; resume.className = "case-resume"; resume.textContent = "继续分析"; resume.disabled = !item.can_continue; resume.title = item.can_continue ? "核验已有原件和工作副本后继续，不复制检材" : "该案件没有可继续使用的完整副本"; resume.addEventListener("click", () => continueCase(item.id)); row.append(view, resume); $("case-list").append(row); }
+  for (const item of cases) {
+    const entry = document.createElement("div"), row = document.createElement("div"), view = document.createElement("button");
+    row.className = "case-row"; view.type = "button"; view.className = "case-item";
+    const title = document.createElement("strong"), detail = document.createElement("small");
+    title.textContent = item.question; detail.textContent = `${states[item.state] || item.state} · ${item.id}`; view.append(title, detail);
+    view.addEventListener("click", () => { if (busy) return notice("请等待当前任务结束后再打开历史报告。"); showReport(item.id).catch(e => notice(e.message)); });
+    const buttons = document.createElement("div"); buttons.className = "case-buttons";
+    for (const [text, action] of [["继续当前题目", () => continueCase(item.id)], ["添加新题", () => chooseNewQuestion(item.id)]]) {
+      const button = document.createElement("button"); button.type = "button"; button.className = "case-resume";
+      button.textContent = text; button.disabled = !item.can_continue; button.addEventListener("click", action); buttons.append(button);
+    }
+    row.append(view, buttons); entry.append(row);
+    for (const question of item.questions || []) {
+      const button = document.createElement("button"); button.type = "button"; button.className = "case-question";
+      button.textContent = `${question.id} · ${question.question}`; button.disabled = !question.has_report;
+      button.addEventListener("click", () => { if (busy) return notice("请等待当前任务结束后再打开历史题目报告。"); showReport(item.id, false, question.id).catch(e => notice(e.message)); });
+      entry.append(button);
+    }
+    $("case-list").append(entry);
+  }
+}
+function chooseNewQuestion(id) {
+  if (busy) return notice("请等待当前任务结束后再添加新题。");
+  nextQuestionCase = id; $("next-question-case").textContent = `复用案件：${id}`;
+  $("next-question-panel").hidden = false; $("next-question").focus();
 }
 function continueCase(id) {
   if (busy) return notice("请等待当前任务结束后再继续案件。");
@@ -98,10 +124,10 @@ async function showManualGuide(id = null, onlyIfNeeded = false) {
     $("manual-status").textContent = `人工指南暂不可读：${error.message}。原任务诊断仍保留。`;
   }
 }
-async function showReport(id, fresh = false) {
+async function showReport(id, fresh = false, question = null) {
   const request = ++reportRequest, guideAtStart = manualRequest;
   let data;
-  try { data = await api(`/api/report?case=${encodeURIComponent(id)}`); }
+  try { data = await api(`/api/report?case=${encodeURIComponent(id)}${question ? `&question=${encodeURIComponent(question)}` : ""}`); }
   catch (error) {
     if (request !== reportRequest) return;
     if (guideAtStart === manualRequest) await showManualGuide(id);
@@ -113,11 +139,13 @@ async function showReport(id, fresh = false) {
   $("output").hidden = false;
   $("empty-state").hidden = true; $("running-state").hidden = true; $("diagnostics").hidden = true;
   $("report").hidden = false; $("report-actions").hidden = false; $("report-meta").hidden = false;
+  $("verify").hidden = Boolean(data.archived);
   $("report-meta").textContent = `${fresh ? "本次生成的报告" : "已保存报告 · 查看时未重新核验，可点击上方按钮复核"} · ${new Date(data.saved_at).toLocaleString("zh-CN")}\n${data.path}`;
   $("output-title").textContent = "取证报告";
   if (!fresh) { $("task-status").textContent = "历史报告"; $("task-status").className = "status"; }
   renderReport(data.text);
-  if (guideAtStart === manualRequest) await showManualGuide(id, true);
+  if (data.archived) { ++manualRequest; manualText = ""; manualCase = null; $("manual-panel").hidden = true; $("manual-download").disabled = true; }
+  else if (guideAtStart === manualRequest) await showManualGuide(id, true);
 }
 async function renderTask(task) {
   if (!task) return;
@@ -150,9 +178,10 @@ async function start(data) {
   notice(); setBusy(true);
   try {
     const result = await api("/api/start", data);
+    $("next-question-panel").hidden = true; nextQuestionCase = null;
     currentCase = null; currentReport = ""; $("report-actions").hidden = true; $("report").hidden = true; $("report-meta").hidden = true; $("diagnostics").hidden = true; $("empty-state").hidden = true;
     ++manualRequest; ++reportRequest; manualText = ""; manualCase = null; $("manual-panel").hidden = true; $("manual-download").disabled = true;
-    $("output-title").textContent = data.action === "doctor" ? "环境检查" : data.action === "continue" ? "继续案件" : "分析结果";
+    $("output-title").textContent = data.action === "doctor" ? "环境检查" : data.action === "continue" ? "继续案件" : data.action === "new_question" ? "分析新题" : "分析结果";
     $("progress-panel").open = true;
     await renderTask(result.task);
   } catch (error) { notice(error.message); setBusy(false); }
@@ -166,6 +195,14 @@ async function poll() {
 }
 $("execution-mode").addEventListener("change", modeChanged);
 $("question").addEventListener("input", questionChanged);
+$("next-question-form").addEventListener("submit", event => {
+  event.preventDefault(); if (busy || !nextQuestionCase) return;
+  const question = $("next-question").value.trim(), mode = $("execution-mode").value;
+  if (!question || question.length > maxQuestion) return notice(`请输入 1..${maxQuestion} 字符的新题目；已保留完整输入。`);
+  if (mode === "tool") return notice("添加新题请先选择自动选择工具或规则模式。");
+  start({action:"new_question", case:nextQuestionCase, question, mode});
+});
+$("cancel-next-question").addEventListener("click", () => { nextQuestionCase = null; $("next-question-panel").hidden = true; });
 $("tool-id").addEventListener("change", toolChanged);
 $("analysis-form").addEventListener("submit", event => {
   event.preventDefault(); let params = {}; const mode = $("execution-mode").value;

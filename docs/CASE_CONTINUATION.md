@@ -1,6 +1,10 @@
 # 继续同一案件
 
-在工作台展开“历史案件”，找到原案件，点击“继续分析”。不用再次填写检材路径，也不用另建案件。继续使用该案件保存的题目；要调查另一道题，应单独登记新案件。
+在工作台展开“历史案件”，找到原案件。点击“继续当前题目”会沿用原题；点击“添加新题”可输入下一道题，再点“复用副本分析新题”。两者都不用再次选择检材路径，不另建案件或复制48 GiB副本。
+
+添加新题时，先核验原件与已有副本。核验成功后为新题分配编号，例如 `q0002`，清空当前答案和计划，保存上一题的题目、状态、步骤编号、答案及报告位置；旧题报告可从该案件下方的题目链接打开。所有工具证据仍保留在同一案件证据库，新题可重新核对并引用；旧答案不会直接转为新题答案。新步骤带题目编号，报告列出本题新增步骤和规则模式复用步骤，所有题目的来源证据仍可复核。
+
+新题与继续原题一样保留整个案件规划纠正、引用纠正分别最多一次的预算，不会因换题重置。规则模式遇到前题已有的成功或partial等价工具结果，会记录复用而不再次执行，也不自动推断新题答案；失败工具结果不会被标记为成功复用。需要由模型继续判断时选择自动模式。
 
 续跑前完整读取并核对原件、已有工作副本、派生文件和已记录工具输出的 SHA256。目录原件还核对登记文件集合。只有核验通过才继续；缺失或内容变化会停止并保留诊断。不会重新复制 48 GiB，也不会直接把原件交给解析器。
 
@@ -18,6 +22,12 @@
 .\.venv-offline\Scripts\python.exe -m forensic_agent --config .\config\default.toml analyze --case 'E:\ForensicWork\案件编号'
 ```
 
-`--case` 与 `--evidence` 不能同时指定；续跑不接受 `--question`，防止混淆原案件题目。`--no-model` 选择规则模式。默认保留单个结果 JSON 输出；工作台使用 `--progress` 读取分阶段进度。
+`--case` 与 `--evidence` 不能同时指定；已有案件不接受 `--question`，防止误改原题。添加新题使用以下命令，`--new-question` 必须配合 `--case`：
 
-本轮验证、已知限制及可直接使用的复审/修复提示词见 [CASE_CONTINUATION_VALIDATION.md](CASE_CONTINUATION_VALIDATION.md)。
+```powershell
+.\.venv-offline\Scripts\python.exe -m forensic_agent --config .\config\default.toml analyze --case 'E:\ForensicWork\案件编号' --new-question '下一道题目原文'
+```
+
+`--no-model` 选择规则模式。默认保留单个结果 JSON 输出；工作台使用 `--progress` 读取分阶段进度。历史题目报告只读显示，不提供会重新生成当前题报告的按钮。
+
+原题续跑的验证见 [CASE_CONTINUATION_VALIDATION.md](CASE_CONTINUATION_VALIDATION.md)。同检材新题的验证、已知限制及复审/修复提示词见 [NEXT_QUESTION_VALIDATION.md](NEXT_QUESTION_VALIDATION.md)。

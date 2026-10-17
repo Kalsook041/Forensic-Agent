@@ -71,6 +71,43 @@ test('continue sends only a case identity and selected planning mode', async () 
   assert.equal(node('output-title').textContent, '继续案件');
 });
 
+test('new question uses the selected case without an evidence path', async () => {
+  const {node,context,requests} = await readyClient();
+  vm.runInContext('chooseNewQuestion("existing-case")', context);
+  node('next-question').value = '下一题：计算机名称是什么？';
+  node('next-question-form').listeners.submit({preventDefault(){}});
+  await settle();
+  assert.deepEqual(requests, [{action:'new_question',case:'existing-case',question:'下一题：计算机名称是什么？',mode:'model'}]);
+  assert.equal(node('output-title').textContent, '分析新题');
+  assert.equal(node('next-question-panel').hidden, true);
+});
+
+test('invalid new question stays intact and cancellation sends no task', async () => {
+  const {node,context,requests} = await readyClient();
+  vm.runInContext('chooseNewQuestion("existing-case")', context);
+  node('next-question').value = '题'.repeat(1001);
+  node('next-question-form').listeners.submit({preventDefault(){}});
+  assert.equal(requests.length, 0);
+  assert.equal(node('next-question').value.length, 1001);
+  assert.equal(node('next-question-panel').hidden, false);
+  node('cancel-next-question').listeners.click();
+  assert.equal(node('next-question-panel').hidden, true);
+  assert.equal(requests.length, 0);
+});
+
+test('archived question report cannot regenerate the current question or show its guide', async () => {
+  const {node,context} = await readyClient();
+  const urls = [];
+  context.fetch = async url => {
+    urls.push(url);
+    return {ok:true,json:async () => ({text:'# 上一题报告',archived:true,path:'history/report.md',saved_at:'now'})};
+  };
+  await vm.runInContext('showReport("case-1", false, "q0001")', context);
+  assert.deepEqual(urls, ['/api/report?case=case-1&question=q0001']);
+  assert.equal(node('verify').hidden, true);
+  assert.equal(node('manual-panel').hidden, true);
+});
+
 test('missing failure report preserves the intake cause and displays diagnostics', async () => {
   const {node,context} = await readyClient();
   context.fetch = async url => ({

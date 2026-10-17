@@ -18,6 +18,7 @@ def run_tool(case, request: ToolRequest):
     directory = case.directory / "steps" / step_id
     directory.mkdir()
     step = {"id": step_id, "request": request.model_dump(), "started_utc": utc_now(), "state": "running",
+            "question_id": case.manifest.get("question_id", "q0001"),
             "raw_output_path": str(directory / "worker.stdout.bin"), "evidence": []}
     step["runtime_versions"] = {"python": sys.version, "sqlite": sqlite3.sqlite_version,
                                 "forensic_agent": __version__, **{name: importlib.metadata.version(name)

@@ -187,6 +187,34 @@ def test_continue_command_reuses_an_existing_case_without_evidence(workspace, tm
         workspace.command({"action": "continue", "case": case.manifest["case_id"], "mode": "tool"})
 
 
+def test_new_question_endpoint_uses_existing_case_and_retains_old_report(server, tmp_path):
+    from forensic_agent.evidence import Case
+    from forensic_agent.reports import generate_report
+
+    evidence = tmp_path / "question.txt"
+    evidence.write_text("SECRET", encoding="utf-8")
+    case = Case.create(evidence, server.workspace.settings, '搜索关键词 "SECRET"')
+    generate_report(case)
+    previous_report = (case.directory / "report.md").read_bytes()
+    snapshot = case.sources["s00001"].working_path
+    with request(server, "/api/start", {"action": "new_question", "case": case.directory.name,
+                                       "question": "SHA256", "mode": "rules"}) as response:
+        assert response.status == 202
+    server.workspace.worker.join(timeout=40)
+    task = server.workspace.snapshot()
+    assert task["status"] == "completed", task
+    updated = Case(case.directory, server.workspace.settings)
+    assert updated.manifest["question_id"] == "q0002"
+    assert updated.sources["s00001"].working_path == snapshot
+    assert len(list(server.workspace.settings.work_dir.iterdir())) == 1
+    with request(server, f"/api/report?case={case.directory.name}&question=q0001") as response:
+        report = json.load(response)
+        assert report["archived"] and report["text"].encode("utf-8") == previous_report
+    with pytest.raises(HTTPError) as error:
+        request(server, f"/api/report?case={case.directory.name}&question=../case.json")
+    assert error.value.code == 400
+
+
 def test_rules_continuation_verifies_then_reuses_same_snapshot(server, tmp_path):
     from forensic_agent.evidence import Case
 

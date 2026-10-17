@@ -58,6 +58,15 @@ def generate_report(case, *, verify_integrity=True):
              f"题目：{inline(case.manifest['question'])}", "",
              f"状态：{inline(case.manifest['state'])}", "", "## 解题计划", ""]
     lines += [f"{i}. {inline(line)}" for i, line in enumerate(case.manifest.get("plan", []), 1)] or ["直接工具调用。"]
+    if case.manifest.get("question_id"):
+        lines += ["", "题目记录：", code_json({"question_id": case.manifest["question_id"],
+            "new_step_ids": [step["id"] for step in case.manifest["steps"]
+                             if step.get("question_id", "q0001") == case.manifest["question_id"]],
+            "reused_step_ids": case.manifest.get("reused_step_ids", []),
+            "previous_questions": [{"id": item["id"], "question": item["question"],
+                                    "report_directory": item.get("report_directory")}
+                                   for item in case.manifest.get("question_history", [])]}),
+            "下列证据库保留全部题目的工具证据；当前候选答案仅针对本页题目。"]
     lines += ["", "## 候选答案与工具事实", ""]
     if case.manifest.get("answers"):
         for answer in case.manifest["answers"]:
@@ -97,7 +106,7 @@ def generate_report(case, *, verify_integrity=True):
     lines += ["## 操作记录", ""]
     for step in case.manifest["steps"]:
         lines += [f"### {inline(step['id'])}：{inline(step['request']['tool_id'])}", "",
-                  code_json({key: step.get(key) for key in ("request", "started_utc", "finished_utc",
+                  code_json({key: step.get(key) for key in ("question_id", "request", "started_utc", "finished_utc",
                                                            "worker_argv", "worker_exit_code", "runtime_versions", "execution_limits",
                                                            "output_hashes", "integrity")}), "",
                   f"状态：{inline(step['result']['status'])}", ""]

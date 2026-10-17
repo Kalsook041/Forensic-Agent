@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from .agent.loop import analyze, prepare_continuation
+from .agent.loop import analyze, prepare_continuation, prepare_next_question
 from .doctor import find_tools, inspect_environment
 from .evidence import Case
 from .models import MAX_QUESTION_CHARS, ToolRequest
@@ -35,8 +35,9 @@ def main(argv=None):
     tool.add_argument("--params", default="{}", help="工具参数 JSON")
     analysis = subparsers.add_parser("analyze", help="输入自然语言题目，进行有限调查")
     analysis.add_argument("--evidence", type=Path)
-    analysis.add_argument("--case", type=Path, help="继续已登记案件；复用其工作副本且不接受新题目")
+    analysis.add_argument("--case", type=Path, help="复用已登记案件；添加新题请配合 --new-question")
     analysis.add_argument("--question")
+    analysis.add_argument("--new-question", help="在 --case 指定的同案件中添加新题，复用原副本")
     analysis.add_argument("--no-model", action="store_true", help="明确使用简单规则流程，不使用模型")
     analysis.add_argument("--progress", action="store_true", help="逐条输出进度 JSON（工作台使用）")
     report = subparsers.add_parser("report", help="重新生成已有案件的中文报告")
@@ -97,13 +98,16 @@ def main(argv=None):
             return 0 if step["result"]["status"] in {"ok", "partial"} and case.manifest["state"] != "evidence_changed" else 2
         if args.evidence and args.case:
             raise ValueError("analyze 的 --evidence 与 --case 不能同时指定")
+        if args.new_question is not None and not args.case:
+            raise ValueError("--new-question 必须与 --case 一起使用")
         if args.case:
             if args.question:
                 raise ValueError("继续案件使用其已保存题目；不接受 --question，以免混淆案件记录")
             case = Case(args.case, settings, progress=progress if args.progress else None)
             lock_case(case)
             continuation_setup = True
-            prepared = prepare_continuation(case)
+            prepared = (prepare_next_question(case, args.new_question) if args.new_question is not None
+                        else prepare_continuation(case))
             continuation_setup = False
             if not prepared:
                 report_path = generate_report(case)
@@ -120,6 +124,7 @@ def main(argv=None):
         analyze(case, no_model=args.no_model, progress=progress if args.progress else None)
         report_path = generate_report(case)
         display({"case": str(case.directory), "state": case.manifest["state"], "reused": bool(args.case),
+                 "question_id": case.manifest.get("question_id", "q0001"),
                  "continued": bool(args.case),
                  "report": str(report_path), "warnings": case.manifest["warnings"]})
         return 0 if case.manifest["state"] in {"completed", "completed_without_model"} else 2

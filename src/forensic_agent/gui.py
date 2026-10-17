@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import re
 import subprocess
 import sys
 import threading
@@ -62,17 +63,36 @@ class Workspace:
                 data = json.loads((path / "case.json").read_text(encoding="utf-8"))
                 result.append({"id": item.name, "question": data.get("question") or "直接工具分析",
                                 "state": data.get("state", "unknown"), "created": data.get("created_utc", ""),
+                                "questions": [{"id": row["id"], "question": row["question"],
+                                               "has_report": bool(row.get("report_directory"))}
+                                              for row in data.get("question_history", [])],
                                 "can_continue": bool(data.get("question") and data.get("root_id")
                                                      and data.get("sources") and data.get("state") in CONTINUABLE_STATES)})
             except (OSError, ValueError):
                 continue
         return result
 
-    def report(self, identity):
-        path = local_path(self.case_path(identity) / "report.md")
+    def report(self, identity, question_id=None):
+        directory = self.case_path(identity)
+        archived = False
+        path = directory / "report.md"
+        if question_id is not None:
+            if not re.fullmatch(r"q[0-9]{4,}", question_id):
+                raise ValueError("题目编号无效")
+            manifest = json.loads((directory / "case.json").read_text(encoding="utf-8"))
+            if question_id != manifest.get("question_id", "q0001"):
+                rows = [row for row in manifest.get("question_history", []) if row["id"] == question_id]
+                if len(rows) != 1 or not rows[0].get("report_directory"):
+                    raise ValueError("该题目没有已保存报告")
+                path = directory / rows[0]["report_directory"] / "report.md"
+                archived = True
+        path = local_path(path)
+        if not within(path, directory):
+            raise ValueError("题目报告路径越界")
         if path.stat().st_size > 8 * 1024**2:
             raise ValueError("报告超过 8 MiB，请在案件目录中打开 report.md")
-        return {"id": identity, "path": str(path), "text": path.read_text(encoding="utf-8"),
+        return {"id": identity, "question_id": question_id, "archived": archived,
+                "path": str(path), "text": path.read_text(encoding="utf-8"),
                 "saved_at": datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat()}
 
     def manual_guide(self, identity=None):
@@ -96,11 +116,17 @@ class Workspace:
             return args + ["doctor"]
         if action == "report":
             return args + ["report", str(self.case_path(data.get("case")))]
-        if action == "continue":
+        if action in {"continue", "new_question"}:
             mode = data.get("mode", "model")
             if mode not in {"model", "rules"}:
                 raise ValueError("继续案件只支持自动规划或规则模式")
-            return args + ["analyze", "--case", str(self.case_path(data.get("case"))), "--progress"] + (
+            extra = []
+            if action == "new_question":
+                question = data.get("question")
+                if not isinstance(question, str) or not 1 <= len(question.strip()) <= MAX_QUESTION_CHARS:
+                    raise ValueError(f"请输入 1..{MAX_QUESTION_CHARS} 字符的新题目；不会截断")
+                extra = ["--new-question", question.strip()]
+            return args + ["analyze", "--case", str(self.case_path(data.get("case"))), "--progress", *extra] + (
                 ["--no-model"] if mode == "rules" else [])
         if action not in {"analyze", "tool"}:
             raise ValueError("请选择分析、直接工具或环境检查")
@@ -138,7 +164,7 @@ class Workspace:
             self.task = {"id": secrets.token_hex(8), "action": data["action"], "status": "running",
                          "started": datetime.now().astimezone().isoformat(), "logs": deque(maxlen=160),
                          "result": None, "case": None, "error": None}
-            if data["action"] == "continue":
+            if data["action"] in {"continue", "new_question"}:
                 self.task["logs"].append("正在核验原件、已有副本和既有工具输出；通过后继续分析，不复制检材。")
             elif data["action"] in {"analyze", "tool"}:
                 self.task["logs"].append("任务已开始；登记检材、复制和哈希核对可能需要一些时间。")
@@ -283,7 +309,9 @@ class Handler(BaseHTTPRequestHandler):
             if target.path == "/api/cases":
                 return self.reply(200, {"cases": workspace.cases()})
             if target.path == "/api/report":
-                return self.reply(200, workspace.report(parse_qs(target.query).get("case", [""])[0]))
+                query = parse_qs(target.query)
+                return self.reply(200, workspace.report(query.get("case", [""])[0],
+                                                        query.get("question", [None])[0]))
             if target.path == "/api/manual-guide":
                 identity = parse_qs(target.query).get("case", [None])[0]
                 return self.reply(200, workspace.manual_guide(identity))
