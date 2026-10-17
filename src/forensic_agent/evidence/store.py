@@ -62,7 +62,7 @@ class Case:
         (directory / "snapshots").mkdir()
         (directory / "steps").mkdir()
         manifest = {"schema_version": 1, "case_id": case_id, "created_utc": utc_now(),
-                    "question": question, "root_id": "s00001", "sources": [], "steps": [],
+                    "question": question, "input_path": str(source), "root_id": "s00001", "sources": [], "steps": [],
                     "warnings": [], "answers": [], "state": "intake", "settings": settings.model_dump(mode="json")}
         write_json(directory / "case.json", manifest)
         case = cls(directory, settings)
@@ -118,12 +118,14 @@ class Case:
         # Reject a known oversized set before copying its first member. Keep the
         # per-file checks below as well, since files/free space can change later.
         planned_bytes = sum(original.stat().st_size for original, _, _ in files)
+        self.manifest["snapshot_plan"] = {"files": len(files), "bytes": planned_bytes}
         capacity = self.settings.limits.snapshot_bytes
         if planned_bytes > capacity:
             raise ValueError(f"检材总量 {planned_bytes:,} 字节（{planned_bytes / 1024**3:.2f} GiB）"
                              f"超过副本上限 {capacity:,} 字节（{capacity / 1024**3:.2f} GiB）；"
                              "请缩小检材范围或使用足够容量的案件配置，分卷包应先解包。未复制检材文件")
         available = shutil.disk_usage(self.directory).free
+        self.manifest["snapshot_plan"]["available_bytes"] = available
         required = planned_bytes + self.settings.limits.reserve_disk_bytes
         if available < required:
             raise OSError(f"工作磁盘空间不足：可用 {available:,} 字节，不足以保存 {planned_bytes:,} 字节检材副本"

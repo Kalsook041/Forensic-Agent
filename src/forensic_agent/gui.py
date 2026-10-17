@@ -14,9 +14,11 @@ import threading
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
+from .evidence import Case
 from .evidence.paths import local_path, within
 from .models import MAX_QUESTION_CHARS, ToolRequest
 from .settings import load_settings
+from .manual import build_manual_guidance
 from .tools.registry import catalog
 
 ASSETS = Path(__file__).with_name("web")
@@ -69,6 +71,11 @@ class Workspace:
             raise ValueError("报告超过 8 MiB，请在案件目录中打开 report.md")
         return {"id": identity, "path": str(path), "text": path.read_text(encoding="utf-8"),
                 "saved_at": datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat()}
+
+    def manual_guide(self, identity=None):
+        # Read manifests only; viewing help never rehashes a large image or runs a tool.
+        case = Case(self.case_path(identity), self.settings) if identity is not None else None
+        return build_manual_guidance(case, settings=self.settings)
 
     def bootstrap(self):
         examples = Path.cwd() / "examples" / "检材"
@@ -258,6 +265,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, {"cases": workspace.cases()})
             if target.path == "/api/report":
                 return self.reply(200, workspace.report(parse_qs(target.query).get("case", [""])[0]))
+            if target.path == "/api/manual-guide":
+                identity = parse_qs(target.query).get("case", [None])[0]
+                return self.reply(200, workspace.manual_guide(identity))
             return self.reply(404, {"error": "页面不存在"})
         except (OSError, ValueError) as exc:
             return self.reply(400, {"error": str(exc)})

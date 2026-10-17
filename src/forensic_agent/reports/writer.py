@@ -3,6 +3,7 @@ import re
 from types import SimpleNamespace
 
 from ..evidence.store import write_json
+from ..manual import build_manual_guidance
 
 
 def inline(value):
@@ -51,6 +52,7 @@ def generate_report(case, *, verify_integrity=True):
         case.invalidate_answers("取消时未执行当前完整性复核")
         case.manifest["warnings"].append("取消报告沿用历史完整性记录，本次未完成当前复核")
     case.save()
+    guidance = build_manual_guidance(case)
     evidence = [row for step in case.manifest["steps"] for row in step["evidence"]]
     lines = ["# 取证分析报告", "", f"案件：{inline(case.manifest['case_id'])}", "",
              f"题目：{inline(case.manifest['question'])}", "",
@@ -112,8 +114,16 @@ def generate_report(case, *, verify_integrity=True):
     lines += [f"- {inline(warning)}" for warning in dict.fromkeys(warnings)] or ["本次工具未报告额外警告；这不等于已穷尽全部取证方向。"]
     lines += ["", "所有时间字段保留工具原值；UTC 字段明确标注，缺少时区的元数据不自动转换。",
               "原始检材以只读方式读取，外部解析器使用工作副本；哈希检查验证内容，不保证访问时间等系统元数据不变。", ""]
+    if guidance["needed"]:
+        lines += [guidance["text"].replace("\n## ", "\n### ").replace("# 人工操作指南", "## 人工操作指南", 1)]
     report_path = case.directory / "report.md"
     report_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    try:
+        (case.directory / "manual-guide.md").write_text(guidance["text"], encoding="utf-8", newline="\n")
+    except OSError as exc:
+        # The main report already contains the instructions. An auxiliary file error
+        # must not hide the intake/analysis failure or prevent the diagnostic report.
+        guidance["file_error"] = f"{type(exc).__name__}: {exc}"
     write_json(case.directory / "report.json", {"case": case.manifest, "evidence": evidence,
-                                                "warnings": list(dict.fromkeys(warnings))})
+                                                "warnings": list(dict.fromkeys(warnings)), "manual_guidance": guidance})
     return report_path

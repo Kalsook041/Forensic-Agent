@@ -1,4 +1,8 @@
 :root { color-scheme: light; --bg:#f3f5f8; --paper:#fff; --ink:#202a3b; --muted:#59677b; --line:#dce1e9; --accent:#4353bd; --accent-hover:#33439f; --accent-tint:#edf0ff; --danger:#a32435; --success:#246149; --radius:12px; font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif; font-size:14px; }
+.manual-panel { margin-top:20px; padding:24px; border:1px solid var(--line); border-radius:var(--radius); background:var(--paper); }
+.manual-panel .output-toolbar { padding:0 0 12px; gap:16px; }
+.manual-panel #manual-status { overflow-wrap:anywhere; }
+.manual-panel .report { padding:0; max-height:580px; overflow:auto; }
 * { box-sizing:border-box; }
 body { margin:0; color:var(--ink); background:var(--bg); line-height:1.6; }
 button,input,textarea,select { font:inherit; }

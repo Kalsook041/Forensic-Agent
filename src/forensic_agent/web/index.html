@@ -57,6 +57,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           </details>
         </fieldset>
       </form>
+      <button id="manual-guide" type="button" class="text-button">通用人工操作指南 · 工具与处理步骤</button>
       <details class="history"><summary>历史案件 <span id="case-count">0</span></summary><p class="help">打开已保存的报告；可在报告上方重新核验。</p><div id="case-list"><p class="help">尚无案件。完成一次分析后会显示在这里。</p></div></details>
     </section>
     <section class="output" id="output" aria-labelledby="output-title" hidden>
@@ -74,6 +75,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <details id="progress-panel" class="progress-panel" open><summary>运行记录 <span id="log-count">尚无记录</span></summary><ol id="logs"><li class="muted">开始分析后，这里会显示实际执行的步骤。</li></ol></details>
     </section>
   </div>
+  <section id="manual-panel" class="manual-panel" aria-labelledby="manual-title" hidden>
+    <div class="output-toolbar"><h2 id="manual-title">人工接续处理</h2><button id="manual-download" type="button" class="secondary" disabled>保存指南</button></div>
+    <p id="manual-status" class="help" role="status"></p>
+    <article id="manual-text" class="report" aria-label="人工操作步骤" tabindex="0"></article>
+  </section>
   <footer><span>模型解释是候选结论，请结合原始工具输出人工复核。</span><span>关闭页面后，正在运行的任务仍会继续。</span></footer>
 </main>
 </body>

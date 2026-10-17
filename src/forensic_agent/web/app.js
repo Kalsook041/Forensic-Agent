@@ -3,6 +3,7 @@ const $ = (id) => document.getElementById(id);
 const token = document.querySelector('meta[name="session-token"]').content;
 let tools = {}, currentCase = null, currentReport = "", modelName = "本地模型", maxQuestion = 1000;
 let busy = false, finishedTask = null, polling = false, stopped = false;
+let manualText = "", manualCase = null, manualRequest = 0, reportRequest = 0;
 const names = {inventory:"文件清单与类型",hash:"SHA256 哈希",search:"文本搜索",metadata:"文件元数据",archive:"压缩包",pcap:"网络流量",sqlite:"SQLite 数据库",evtx:"Windows 事件日志",evtxecmd:"EZTools 事件日志"};
 const defaults = {search:{keyword:"FLAG"},metadata:{fields:["Author"]},archive:{action:"list"},pcap:{protocol:"overview"},sqlite:{query:"schema"}};
 const states = {completed:"分析完成",completed_without_model:"规则模式完成",tool_completed:"工具完成",evidence_changed:"完整性检查未通过",insufficient_evidence:"证据不足",model_unavailable:"模型不可用",tool_failed:"工具失败",model_failed:"模型响应失败",cancelled:"已取消",ready:"已登记",intake_failed:"检材登记失败",stopped_budget:"达到步数上限",stopped_duplicate:"重复调用已停止",stopped_no_progress:"无新增证据已停止"};
@@ -49,8 +50,8 @@ function renderCases(cases) {
 function inline(parent, text) {
   for (const part of text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g)) { const tag = part.startsWith("`") && part.endsWith("`") ? "code" : part.startsWith("**") && part.endsWith("**") ? "strong" : null; if (tag) { const el = document.createElement(tag); el.textContent = part.slice(tag === "code" ? 1 : 2, tag === "code" ? -1 : -2); parent.append(el); } else parent.append(document.createTextNode(part)); }
 }
-function renderReport(text) {
-  const root = $("report"); root.replaceChildren(); const lines = text.split(/\r?\n/); let code = null, table = null;
+function renderReport(text, root = $("report")) {
+  root.replaceChildren(); const lines = text.split(/\r?\n/); let code = null, table = null;
   for (const line of lines) {
     if (line.startsWith("```")) { if (code) code = null; else { code = document.createElement("pre"); root.append(code); } table = null; continue; }
     if (code) { code.textContent += line + "\n"; continue; }
@@ -65,8 +66,42 @@ function renderReport(text) {
     const heading = line.match(/^(#{1,3})\s+(.*)$/), el = document.createElement(heading ? `h${heading[1].length}` : "p"); inline(el, heading ? heading[2] : line); root.append(el);
   }
 }
+async function showManualGuide(id = null, onlyIfNeeded = false) {
+  const request = ++manualRequest;
+  manualText = ""; manualCase = id;
+  $("manual-download").disabled = true; $("manual-status").textContent = "正在读取人工步骤…";
+  try {
+    let data, fallback = "";
+    try { data = await api(`/api/manual-guide${id ? `?case=${encodeURIComponent(id)}` : ""}`); }
+    catch (error) {
+      if (!id) throw error;
+      data = await api("/api/manual-guide");
+      fallback = `案件指南暂不可读：${error.message}。以下是通用步骤，请按实际输入选择。`;
+    }
+    if (request !== manualRequest) return;
+    if (typeof data.text !== "string") throw new Error("服务没有返回指南文本");
+    if (onlyIfNeeded && !data.needed && !fallback) { $("manual-panel").hidden = true; return; }
+    manualText = data.text;
+    manualCase = fallback ? null : id;
+    $("manual-panel").hidden = false;
+    $("manual-status").textContent = fallback || (id ? "根据保存的案件状态生成；不会自动执行这些操作。" : "通用指南，请按本题输入选择对应方向。");
+    renderReport(manualText, $("manual-text")); $("manual-download").disabled = false;
+  } catch (error) {
+    if (request !== manualRequest) return;
+    $("manual-panel").hidden = false; $("manual-text").replaceChildren();
+    $("manual-status").textContent = `人工指南暂不可读：${error.message}。原任务诊断仍保留。`;
+  }
+}
 async function showReport(id, fresh = false) {
-  const data = await api(`/api/report?case=${encodeURIComponent(id)}`);
+  const request = ++reportRequest, guideAtStart = manualRequest;
+  let data;
+  try { data = await api(`/api/report?case=${encodeURIComponent(id)}`); }
+  catch (error) {
+    if (request !== reportRequest) return;
+    if (guideAtStart === manualRequest) await showManualGuide(id);
+    throw error;
+  }
+  if (request !== reportRequest) return;
   currentCase = id; currentReport = data.text;
   $("output").hidden = false;
   $("empty-state").hidden = true; $("running-state").hidden = true; $("diagnostics").hidden = true;
@@ -75,6 +110,7 @@ async function showReport(id, fresh = false) {
   $("output-title").textContent = "取证报告";
   if (!fresh) { $("task-status").textContent = "历史报告"; $("task-status").className = "status"; }
   renderReport(data.text);
+  if (guideAtStart === manualRequest) await showManualGuide(id, true);
 }
 async function renderTask(task) {
   if (!task) return;
@@ -99,7 +135,7 @@ async function renderTask(task) {
       $("output-title").textContent = "任务失败详情";
     }
   }
-  else { $("diagnostics").hidden = false; $("diagnostics").textContent = JSON.stringify(task.result || {error:task.error}, null, 2); $("output-title").textContent = task.action === "doctor" ? "环境检查结果" : "任务结果"; }
+  else { $("diagnostics").hidden = false; $("diagnostics").textContent = JSON.stringify(task.result || {error:task.error}, null, 2); $("output-title").textContent = task.action === "doctor" ? "环境检查结果" : "任务结果"; if (task.status === "failed") await showManualGuide(); }
   try { renderCases((await api("/api/cases")).cases); } catch (error) { notice(`无法更新历史案件：${error.message}`); }
 }
 async function start(data) {
@@ -108,6 +144,7 @@ async function start(data) {
   try {
     const result = await api("/api/start", data);
     currentCase = null; currentReport = ""; $("report-actions").hidden = true; $("report").hidden = true; $("report-meta").hidden = true; $("diagnostics").hidden = true; $("empty-state").hidden = true;
+    ++manualRequest; ++reportRequest; manualText = ""; manualCase = null; $("manual-panel").hidden = true; $("manual-download").disabled = true;
     $("output-title").textContent = data.action === "doctor" ? "环境检查" : "分析结果";
     $("progress-panel").open = true;
     await renderTask(result.task);
@@ -130,6 +167,8 @@ $("analysis-form").addEventListener("submit", event => {
 });
 for (const kind of ["file","directory"]) $("pick-" + kind).addEventListener("click", async () => { const button = $("pick-" + kind); button.disabled = true; notice("请在系统弹出的选择窗口中选择检材。", true); try { const data = await api("/api/pick", {kind}); if (data.path) $("evidence").value = data.path; notice(); } catch (error) { notice(error.message); } finally { button.disabled = false; } });
 $("doctor").addEventListener("click", () => start({action:"doctor"}));
+$("manual-guide").addEventListener("click", async () => { await showManualGuide(); $("manual-text").focus(); });
+$("manual-download").addEventListener("click", () => { if (!manualText) return; const url = URL.createObjectURL(new Blob([manualText], {type:"text/markdown;charset=utf-8"})), link = document.createElement("a"); link.href = url; link.download = `${manualCase || "general"}-manual-guide.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
 $("verify").addEventListener("click", () => { if (currentCase) start({action:"report", case:currentCase}); });
 $("download").addEventListener("click", () => { const blob = new Blob([currentReport], {type:"text/markdown;charset=utf-8"}), url = URL.createObjectURL(blob), link = document.createElement("a"); link.href = url; link.download = `${currentCase || "forensic"}-report.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
 $("shutdown").addEventListener("click", async () => { try { const data = await api("/api/shutdown", {}); stopped = true; setBusy(true); notice(data.message, true); } catch (error) { notice(error.message); } });

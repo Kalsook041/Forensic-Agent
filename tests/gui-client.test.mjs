@@ -79,6 +79,89 @@ test('missing failure report preserves the intake cause and displays diagnostics
   assert.equal(node('task-status').textContent, '检材登记失败');
 });
 
+test('failure guide survives a missing report without replacing the original error', async () => {
+  const {node,context} = await readyClient();
+  context.fetch = async url => ({
+    ok:!url.startsWith('/api/report'),
+    json:async () => url.startsWith('/api/report') ? {error:'报告不存在'} :
+      url.startsWith('/api/manual-guide') ? {needed:true,text:'# 人工操作指南\n用 FTK Imager 导出 SYSTEM。'} : {cases:[]},
+  });
+  await vm.runInContext(`renderTask({id:'manual-failure',status:'failed',case:'case-2',action:'analyze',
+    error:'工作磁盘空间不足',result:{state:'intake_failed'},logs:[]})`, context);
+  assert.match(node('notice').textContent, /工作磁盘空间不足/);
+  assert.equal(node('manual-panel').hidden, false);
+  assert.equal(node('manual-download').disabled, false);
+  assert.match(vm.runInContext('manualText', context), /FTK Imager/);
+  assert.equal(vm.runInContext('manualCase', context), 'case-2');
+});
+
+test('general fallback and help errors do not overwrite the task diagnostic', async () => {
+  const {node,context} = await readyClient();
+  let generalWorks = true;
+  context.fetch = async url => {
+    if (url.startsWith('/api/report')) return {ok:false,json:async () => ({error:'报告不可读'})};
+    if (url.includes('/api/manual-guide?')) return {ok:false,json:async () => ({error:'案件记录不可读'})};
+    if (url === '/api/manual-guide') {
+      if (!generalWorks) throw new Error('help service unavailable');
+      return {ok:true,json:async () => ({needed:true,text:'# 通用人工操作指南'})};
+    }
+    return {ok:true,json:async () => ({cases:[]})};
+  };
+  await vm.runInContext(`renderTask({id:'fallback',status:'failed',case:'case-3',action:'analyze',
+    error:'原始容量错误',result:{state:'intake_failed'},logs:[]})`, context);
+  assert.match(node('notice').textContent, /原始容量错误/);
+  assert.match(node('manual-status').textContent, /案件记录不可读.*通用步骤/);
+  assert.equal(vm.runInContext('manualCase', context), null);
+  generalWorks = false;
+  await vm.runInContext('showManualGuide()', context);
+  assert.match(node('manual-status').textContent, /help service unavailable/);
+  assert.match(node('notice').textContent, /原始容量错误/);
+  assert.equal(node('manual-download').disabled, true);
+});
+
+test('late help response cannot replace newer guidance and contents remain text', async () => {
+  const {node,context} = await readyClient();
+  let resolveOld;
+  context.fetch = async url => {
+    if (url.includes('case=old')) return new Promise(resolve => { resolveOld = resolve; });
+    return {ok:true,json:async () => ({needed:true,text:'# 新指南\n<script>globalThis.injected=true</script>'})};
+  };
+  const old = vm.runInContext('showManualGuide("old")', context);
+  await vm.runInContext('showManualGuide("new")', context);
+  resolveOld({ok:true,json:async () => ({needed:true,text:'旧指南'})});
+  await old;
+  assert.match(vm.runInContext('manualText', context), /新指南/);
+  assert.equal(vm.runInContext('manualCase', context), 'new');
+  assert.equal(context.injected, undefined);
+  assert.equal(node('manual-panel').hidden, false);
+});
+
+test('historical case without a report still loads its case guidance', async () => {
+  const {node,context} = await readyClient();
+  context.fetch = async url => ({ok:!url.startsWith('/api/report'), json:async () =>
+    url.startsWith('/api/report') ? {error:'历史报告不可读'} : {needed:true,text:'# 历史案件人工步骤'}});
+  await assert.rejects(vm.runInContext('showReport("history")', context), /历史报告不可读/);
+  assert.equal(node('manual-panel').hidden, false);
+  assert.equal(vm.runInContext('manualCase', context), 'history');
+  assert.match(vm.runInContext('manualText', context), /历史案件/);
+});
+
+test('a slow report cannot replace subsequently selected general guidance', async () => {
+  const {node,context} = await readyClient();
+  let resolveReport;
+  context.fetch = async url => {
+    if (url.startsWith('/api/report')) return new Promise(resolve => {resolveReport=resolve;});
+    return {ok:true,json:async () => ({needed:true,text:'# 用户主动打开的通用指南'})};
+  };
+  const report = vm.runInContext('showReport("old-case")', context);
+  await vm.runInContext('showManualGuide()', context);
+  resolveReport({ok:true,json:async () => ({id:'old-case',text:'# 旧报告',path:'report.md',saved_at:'now'})});
+  await report;
+  assert.equal(vm.runInContext('manualCase', context), null);
+  assert.match(vm.runInContext('manualText', context), /通用指南/);
+  assert.equal(node('manual-panel').hidden, false);
+});
+
 test('long pasted text stays intact and manual tool mode clears hidden question validation', async () => {
   const {node} = await readyClient();
   const longQuestion = '长题干'.repeat(400);

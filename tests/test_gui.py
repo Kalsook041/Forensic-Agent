@@ -54,6 +54,38 @@ def test_page_assets_and_bootstrap(server):
         assert "search" in data["tools"] and data["max_question"] == 1000
 
 
+def test_manual_guide_is_authenticated_and_confined(server):
+    with request(server, "/api/manual-guide") as response:
+        data = json.load(response)
+        assert "人工操作指南" in data["text"] and data["needed"]
+    for path, headers, status in [
+        ("/api/manual-guide", {"X-Session-Token": ""}, 403),
+        ("/api/manual-guide", {"Origin": "https://evil.example"}, 403),
+        ("/api/manual-guide?case=..%2Foutside", {}, 400),
+    ]:
+        with pytest.raises(HTTPError) as error:
+            request(server, path, headers=headers)
+        assert error.value.code == status
+    assert server.workspace.snapshot() is None
+
+
+def test_case_guide_works_without_report_or_rehash(server, tmp_path, monkeypatch):
+    from forensic_agent.evidence import Case
+
+    source = tmp_path / "SYSTEM"
+    source.write_bytes(b"fixture")
+    case = Case.create(source, server.workspace.settings, "计算机名")
+    case.manifest["state"] = "model_failed"
+    case.save()
+    assert not (case.directory / "report.md").exists()
+    monkeypatch.setattr(Case, "record_integrity", lambda *a, **k: pytest.fail("Guide must not rehash"))
+    with request(server, f"/api/manual-guide?case={case.manifest['case_id']}") as response:
+        guide = json.load(response)
+        assert guide["needed"] and "ComputerName" in guide["text"]
+        assert guide["state"] == "model_failed"
+    assert not case.manifest["steps"] and server.workspace.snapshot() is None
+
+
 @pytest.mark.parametrize("headers", [
     {"X-Session-Token": "wrong"}, {"Origin": "https://example.com"},
     {"Host": "evil.example"}, {"Sec-Fetch-Site": "cross-site"},
