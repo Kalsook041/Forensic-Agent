@@ -6,6 +6,8 @@ import re
 
 TOOLS = {
     "explorer": ("Windows 文件资源管理器", None, "https://support.microsoft.com/windows"),
+    "powershell_search": ("PowerShell Select-String（人工文本搜索）", None,
+                          "https://learn.microsoft.com/powershell/module/microsoft.powershell.utility/select-string"),
     "seven_zip": ("7-Zip", "seven_zip", "https://www.7-zip.org/"),
     "ftk_imager": ("FTK Imager", None, "https://www.exterro.com/ftk-downloads/ftk-imager-8-3"),
     "veracrypt": ("VeraCrypt（仅用于已确认的对应格式）", None, "https://veracrypt.io/en/Documentation.html"),
@@ -27,6 +29,7 @@ WORKFLOWS = {
         "steps": [
             "暂停基于该案件给出结论，保留原始错误、报告、模型响应和工具日志。",
             "对照报告的原件路径、工作副本路径和 SHA-256，确认是移动、清理、文件变化还是读盘失败。",
+            "首次登记尚无已核验摘要时，先确认原件停止变化或重新取得稳定检材，再重新登记；不能用变化后的新摘要证明原先内容未变。",
             "原件曾移动时，恢复到原登记路径并核对摘要；工作副本已清理时，不能把旧报告的历史检查当作当前检查。",
             "确认输入完整后重新登记或恢复正确副本，再重新核验；不要改写案件 JSON、关闭哈希检查或沿用已失效答案。",
         ],
@@ -80,6 +83,30 @@ WORKFLOWS = {
             "第一条显示 Current，请保存控制台原始输出；第二条导出整个目标键的 JSON，再核对其中 ComputerName 值。",
             "交回 RECmd 原始输出 TXT/JSON 或 CSV，并记录镜像摘要、SYSTEM 摘要、导出路径、键名和工具版本。",
             "查询对象是导出副本；本机环境变量 COMPUTERNAME 不能回答离线镜像的计算机名。",
+        ],
+    },
+    "search": {
+        "title": "普通文本搜索失败或扫描/命中结果不完整",
+        "tools": ["powershell_search"],
+        "steps": [
+            "确认输入是已导出的普通文本副本，记录源路径、SHA-256、编码、关键词和是否区分大小写；镜像、压缩包或二进制先用对应格式工具提取。",
+            "在 PowerShell 中对副本使用 Select-String。示例用 -LiteralPath 按原样处理路径、-SimpleMatch 按字面搜索关键词，默认不区分大小写；题目要求时加 -CaseSensitive。",
+            "示例指定 UTF8；UTF-16LE 可改用 Unicode。其他编码须按当前 PowerShell 支持范围确认，记录任何转换过程；乱码或编码未确认不能作为无命中依据。",
+            "先新建导出目录，再整段运行示例（含目标文件存在性检查），把 Path、LineNumber、Line 保存为 CSV；已有输出时换新路径。示例使用单引号，内容中的单引号写成两个单引号。",
+            "保留 PowerShell 版本、完整命令及错误输出。示例保留匹配行而非每个匹配出现次数；不要以行数回答出现次数，也不要加 -First 截取后声称完整。",
+            "大文件确需分段时，记录每段字节/行号范围及原文件行号映射。未覆盖、读失败、中止或编码未确认的范围继续标记 partial；空 CSV 或零行不能自行证明完整 0。",
+        ],
+        "commands": [
+            "if (Test-Path -LiteralPath '新导出目录\\搜索结果.csv') { throw '导出文件已存在，请选择新路径' }",
+            "Select-String -LiteralPath '文本副本完整路径' -Pattern '待替换关键词' "
+            "-SimpleMatch -Encoding UTF8 -ErrorAction Stop | "
+            "Select-Object Path,LineNumber,Line | "
+            "Export-Csv -LiteralPath '新导出目录\\搜索结果.csv' -NoTypeInformation "
+            "-Encoding UTF8 -NoClobber -ErrorAction Stop",
+        ],
+        "exports": [
+            "交回匹配行 CSV、原文本副本和来源摘要、实际编码/关键词/大小写设置、覆盖范围、完整命令与错误记录。",
+            "保留原 partial 和跳过记录；人工结果需重新核对来源及范围，不能直接当作经自动引用校验的答案。",
         ],
     },
     "pcap": {
@@ -207,7 +234,7 @@ def _tool_info(identity, settings, inventory):
     if not path and isinstance(entry, dict):
         path = entry.get("executable")
     found = bool(path and _local_file(path))
-    status = "Windows 系统工具" if identity == "explorer" else (
+    status = "Windows 系统工具；所列命令待人工执行" if identity in {"explorer", "powershell_search"} else (
         "静态说明，未检测本机入口" if settings is None else (
             "检测到入口文件；未针对本任务验证解析能力" if found else "未检测到配置入口；请手动确认或从官方准备"))
     return {"id": identity, "name": name, "path": str(path) if found else None,
@@ -234,7 +261,7 @@ def build_manual_guidance(case=None, *, settings=None, inventory=None):
     kinds = {str(step.get("request", {}).get("tool_id", "")) for step in steps}
     selected = []
     integrity = state == "evidence_changed" or any(x in warnings for x in (
-        "复制期间源文件变化", "副本哈希验证失败", "检材在复制期间变化"))
+        "复制期间源文件变化", "副本哈希验证失败", "检材在复制期间变化", "源文件增长"))
     if case is None:
         selected = list(WORKFLOWS)
     elif needed and integrity:
@@ -245,6 +272,8 @@ def build_manual_guidance(case=None, *, settings=None, inventory=None):
         if "archive" in kinds or any(re.search(r"\.(7z|zip|rar|tar|gz)(\.\d+)?$|\.\d{3}$", x)
                                      or "分卷" in x for x in names):
             selected.append("archive")
+        if "search" in kinds:
+            selected.append("search")
         if any(x in question for x in ("计算机名", "主机名", "computername", "注册表")) or any(
                 x in {"system", "ntuser.dat"} or x.endswith(".hive") for x in names):
             selected.extend(["archive", "windows"])

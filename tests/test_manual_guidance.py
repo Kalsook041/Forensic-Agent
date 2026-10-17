@@ -1,4 +1,5 @@
 import copy
+import errno
 import json
 from pathlib import Path
 
@@ -183,3 +184,136 @@ def test_root_only_tool_path_does_not_break_guide(tmp_path, settings, general):
     tool = next(t for w in guide["workflows"] for t in w["tools"] if t["id"] == "wireshark")
     assert guide["needed"] and not tool["entry_found"] and tool["path"] is None
     assert "Wireshark" in guide["text"]
+
+
+def test_growth_before_first_source_registration_prioritizes_integrity(tmp_path, settings, monkeypatch):
+    source = tmp_path / "capture.pcap"
+    source.write_bytes(b"x")
+    original_open, reads = Path.open, 0
+
+    def growing_open(path, mode="r", *args, **kwargs):
+        nonlocal reads
+        if path == source and mode == "rb":
+            reads += 1
+            if reads == 2:
+                with original_open(source, "ab") as stream:
+                    stream.write(b"GROW")
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", growing_open)
+    with pytest.raises(OSError, match="源文件增长") as error:
+        Case.create(source, settings, "统计流量 IP")
+    case = Case(Path(error.value.case_directory), settings)
+    first_warnings = list(case.manifest["warnings"])
+    assert source.stat().st_size == 5 and not case.sources
+    assert case.manifest["snapshot_plan"]["available_bytes"] > 5
+    generate_report(case)
+    guide = json.loads((case.directory / "report.json").read_text(encoding="utf-8"))["manual_guidance"]
+    assert workflow_ids(guide) == ["integrity"]
+    assert case.manifest["state"] == "intake_failed" and not case.manifest["answers"]
+    assert case.manifest["warnings"] == first_warnings
+
+
+def test_actual_space_failure_keeps_storage_workflow(tmp_path, settings, monkeypatch):
+    from types import SimpleNamespace
+
+    source = tmp_path / "note.txt"
+    source.write_bytes(b"fixture")
+    monkeypatch.setattr("forensic_agent.evidence.store.shutil.disk_usage", lambda _: SimpleNamespace(free=0))
+    with pytest.raises(OSError, match="工作磁盘空间不足") as error:
+        Case.create(source, settings)
+    case = Case(Path(error.value.case_directory), settings)
+    assert workflow_ids(build_manual_guidance(case, inventory={})) == ["storage"]
+
+
+def test_pure_text_partial_has_manual_search_without_widening_limits(tmp_path, settings, monkeypatch):
+    source = tmp_path / "large.txt"
+    source.write_bytes(b"needle\n")
+    settings.limits.text_file_bytes = 1
+    before_limits = settings.limits.model_dump()
+    case = Case.create(source, settings, "搜索 needle")
+    step = run_tool(case, ToolRequest(tool_id="search", source_id="s00001", params={"keyword": "needle"}))
+    assert step["result"]["status"] == "partial"
+    case.manifest["state"] = "tool_completed"
+    first = copy.deepcopy(step)
+    generate_report(case)
+    guide = json.loads((case.directory / "report.json").read_text(encoding="utf-8"))["manual_guidance"]
+    assert workflow_ids(guide) == ["search"]
+    assert guide["workflows"][0]["tools"][0]["id"] == "powershell_search"
+    assert "Select-String" in guide["text"] and "Export-Csv" in guide["text"]
+    assert "LineNumber" in guide["text"] and "partial" in guide["text"]
+    assert settings.limits.model_dump() == before_limits and step == first
+    before = copy.deepcopy(case.manifest)
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: pytest.fail("Guide cannot execute its command"))
+    build_manual_guidance(case, inventory={})
+    assert case.manifest == before and case.manifest["state"] == "tool_completed"
+    assert not case.manifest["answers"]
+
+
+def test_optional_guide_cannot_consume_space_needed_by_primary_reports(tmp_path, settings, monkeypatch):
+    from forensic_agent.reports import writer
+
+    source = tmp_path / "note.txt"
+    source.write_bytes(b"fixture")
+    case = Case.create(source, settings)
+    case.manifest.update(state="model_unavailable", warnings=["first model error"])
+    # Keep report content stable while modelling only the available bytes for report files.
+    monkeypatch.setattr(case, "record_integrity", lambda _: None)
+    generate_report(case)
+    primary_size = sum((case.directory / name).stat().st_size for name in ["report.md", "report.json"])
+    allocated, order = {}, []
+    original_text, original_json = Path.write_text, writer.write_json
+
+    def reserve(name, data):
+        proposed = sum(allocated.values()) - allocated.get(name, 0) + len(data)
+        order.append(name)
+        if proposed > primary_size:
+            raise OSError(errno.ENOSPC, "simulated report quota")
+        allocated[name] = len(data)
+
+    def limited_text(path, text, *args, **kwargs):
+        if path.parent == case.directory and path.name in {"report.md", "manual-guide.md"}:
+            reserve(path.name, text.encode("utf-8"))
+        return original_text(path, text, *args, **kwargs)
+
+    def limited_json(path, value):
+        if path == case.directory / "report.json":
+            reserve(path.name, json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8"))
+        return original_json(path, value)
+
+    monkeypatch.setattr(Path, "write_text", limited_text)
+    monkeypatch.setattr(writer, "write_json", limited_json)
+    report = generate_report(case)
+    data = json.loads((case.directory / "report.json").read_text(encoding="utf-8"))
+    assert report.is_file() and data["case"]["state"] == "model_unavailable"
+    assert data["case"]["warnings"] == ["first model error"]
+    assert {"report.md", "report.json"} <= allocated.keys()
+    assert order.index("report.json") < order.index("manual-guide.md")
+
+
+def test_failed_auxiliary_error_update_cannot_fail_primary_report(tmp_path, settings, monkeypatch):
+    from forensic_agent.reports import writer
+
+    source = tmp_path / "note.txt"
+    source.write_bytes(b"fixture")
+    case = Case.create(source, settings)
+    case.manifest.update(state="model_unavailable", warnings=["first model error"])
+    original_text, original_json = Path.write_text, writer.write_json
+
+    def fail_guide(path, *args, **kwargs):
+        if path.name == "manual-guide.md":
+            raise OSError("guide locked")
+        return original_text(path, *args, **kwargs)
+
+    def fail_metadata_update(path, value):
+        if value.get("manual_guidance", {}).get("file_error"):
+            raise OSError("metadata update unavailable")
+        return original_json(path, value)
+
+    monkeypatch.setattr(Path, "write_text", fail_guide)
+    monkeypatch.setattr(writer, "write_json", fail_metadata_update)
+    report = generate_report(case)
+    data = json.loads((case.directory / "report.json").read_text(encoding="utf-8"))
+    assert report.is_file() and "first model error" in report.read_text(encoding="utf-8")
+    assert data["case"]["state"] == "model_unavailable"
+    assert data["case"]["warnings"] == ["first model error"]

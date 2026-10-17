@@ -11,19 +11,20 @@
 
 ## 先处理来源变化或副本缺失
 
-- 工具：Windows 文件资源管理器；Windows 系统工具。
+- 工具：Windows 文件资源管理器；Windows 系统工具；所列命令待人工执行。
   官方说明：https://support.microsoft.com/windows
 1. 暂停基于该案件给出结论，保留原始错误、报告、模型响应和工具日志。
 2. 对照报告的原件路径、工作副本路径和 SHA-256，确认是移动、清理、文件变化还是读盘失败。
-3. 原件曾移动时，恢复到原登记路径并核对摘要；工作副本已清理时，不能把旧报告的历史检查当作当前检查。
-4. 确认输入完整后重新登记或恢复正确副本，再重新核验；不要改写案件 JSON、关闭哈希检查或沿用已失效答案。
+3. 首次登记尚无已核验摘要时，先确认原件停止变化或重新取得稳定检材，再重新登记；不能用变化后的新摘要证明原先内容未变。
+4. 原件曾移动时，恢复到原登记路径并核对摘要；工作副本已清理时，不能把旧报告的历史检查当作当前检查。
+5. 确认输入完整后重新登记或恢复正确副本，再重新核验；不要改写案件 JSON、关闭哈希检查或沿用已失效答案。
 
 交回 Agent：
 - 保留错误报告和清理/移动记录；输入恢复前不要把历史候选作为新答案交回。
 
 ## 副本容量或工作盘空间不足
 
-- 工具：Windows 文件资源管理器；Windows 系统工具。
+- 工具：Windows 文件资源管理器；Windows 系统工具；所列命令待人工执行。
   官方说明：https://support.microsoft.com/windows
 - 工具：FTK Imager；静态说明，未检测本机入口。
   官方说明：https://www.exterro.com/ftk-downloads/ftk-imager-8-3
@@ -81,6 +82,27 @@
 - 第一条显示 Current，请保存控制台原始输出；第二条导出整个目标键的 JSON，再核对其中 ComputerName 值。
 - 交回 RECmd 原始输出 TXT/JSON 或 CSV，并记录镜像摘要、SYSTEM 摘要、导出路径、键名和工具版本。
 - 查询对象是导出副本；本机环境变量 COMPUTERNAME 不能回答离线镜像的计算机名。
+
+## 普通文本搜索失败或扫描/命中结果不完整
+
+- 工具：PowerShell Select-String（人工文本搜索）；Windows 系统工具；所列命令待人工执行。
+  官方说明：https://learn.microsoft.com/powershell/module/microsoft.powershell.utility/select-string
+1. 确认输入是已导出的普通文本副本，记录源路径、SHA-256、编码、关键词和是否区分大小写；镜像、压缩包或二进制先用对应格式工具提取。
+2. 在 PowerShell 中对副本使用 Select-String。示例用 -LiteralPath 按原样处理路径、-SimpleMatch 按字面搜索关键词，默认不区分大小写；题目要求时加 -CaseSensitive。
+3. 示例指定 UTF8；UTF-16LE 可改用 Unicode。其他编码须按当前 PowerShell 支持范围确认，记录任何转换过程；乱码或编码未确认不能作为无命中依据。
+4. 先新建导出目录，再整段运行示例（含目标文件存在性检查），把 Path、LineNumber、Line 保存为 CSV；已有输出时换新路径。示例使用单引号，内容中的单引号写成两个单引号。
+5. 保留 PowerShell 版本、完整命令及错误输出。示例保留匹配行而非每个匹配出现次数；不要以行数回答出现次数，也不要加 -First 截取后声称完整。
+6. 大文件确需分段时，记录每段字节/行号范围及原文件行号映射。未覆盖、读失败、中止或编码未确认的范围继续标记 partial；空 CSV 或零行不能自行证明完整 0。
+
+待替换路径的 PowerShell 示例（复制前先核对参数）：
+```powershell
+if (Test-Path -LiteralPath '新导出目录\搜索结果.csv') { throw '导出文件已存在，请选择新路径' }
+Select-String -LiteralPath '文本副本完整路径' -Pattern '待替换关键词' -SimpleMatch -Encoding UTF8 -ErrorAction Stop | Select-Object Path,LineNumber,Line | Export-Csv -LiteralPath '新导出目录\搜索结果.csv' -NoTypeInformation -Encoding UTF8 -NoClobber -ErrorAction Stop
+```
+
+交回 Agent：
+- 交回匹配行 CSV、原文本副本和来源摘要、实际编码/关键词/大小写设置、覆盖范围、完整命令与错误记录。
+- 保留原 partial 和跳过记录；人工结果需重新核对来源及范围，不能直接当作经自动引用校验的答案。
 
 ## PCAP 统计、筛选结果不完整或 TLS 无明文
 

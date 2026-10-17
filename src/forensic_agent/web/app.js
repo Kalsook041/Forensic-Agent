@@ -99,6 +99,7 @@ async function showReport(id, fresh = false) {
   catch (error) {
     if (request !== reportRequest) return;
     if (guideAtStart === manualRequest) await showManualGuide(id);
+    if (request !== reportRequest) return;
     throw error;
   }
   if (request !== reportRequest) return;

@@ -162,6 +162,42 @@ test('a slow report cannot replace subsequently selected general guidance', asyn
   assert.equal(node('manual-panel').hidden, false);
 });
 
+for (const next of ['history', 'new-task']) test(`stale failure after a slow guide preserves ${next}`, async () => {
+  const {node,context} = await readyClient();
+  let resolveGuide;
+  context.fetch = async url => {
+    if (url === '/api/report?case=old') return {ok:false,json:async () => ({error:'old report missing'})};
+    if (url === '/api/manual-guide?case=old') return new Promise(resolve => {resolveGuide=resolve;});
+    if (url === '/api/start') return {ok:true,json:async () => ({task:{id:'new-task',status:'running',logs:[]}})};
+    if (url.startsWith('/api/report')) return {ok:true,json:async () => ({text:'# Report B',path:'B/report.md',saved_at:'now'})};
+    if (url.startsWith('/api/manual-guide')) return {ok:true,json:async () => ({needed:true,text:'# Guide B'})};
+    return {ok:true,json:async () => ({cases:[]})};
+  };
+  const old = vm.runInContext(`renderTask({id:'old-task',case:'old',status:'failed',action:'analyze',
+    error:'old original error',result:{state:'intake_failed'},logs:[]})`, context);
+  await settle();
+  assert.equal(typeof resolveGuide, 'function');
+  if (next === 'history') await vm.runInContext('showReport("B")', context);
+  else await vm.runInContext('start({action:"analyze"})', context);
+  resolveGuide({ok:true,json:async () => ({needed:true,text:'# Old guide'})});
+  await old;
+  assert.equal(node('diagnostics').hidden, true);
+  if (next === 'history') {
+    assert.equal(node('report').hidden, false);
+    assert.equal(node('report-actions').hidden, false);
+    assert.equal(node('output-title').textContent, '取证报告');
+    assert.equal(vm.runInContext('currentCase', context), 'B');
+    assert.equal(vm.runInContext('manualCase', context), 'B');
+    assert.equal(vm.runInContext('manualText', context), '# Guide B');
+  } else {
+    assert.equal(node('running-state').hidden, false);
+    assert.equal(node('manual-panel').hidden, true);
+    assert.equal(node('output-title').textContent, '分析结果');
+    assert.equal(node('notice').textContent, '');
+    assert.equal(node('input-fields').disabled, true);
+  }
+});
+
 test('long pasted text stays intact and manual tool mode clears hidden question validation', async () => {
   const {node} = await readyClient();
   const longQuestion = '长题干'.repeat(400);

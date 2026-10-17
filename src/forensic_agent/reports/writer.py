@@ -118,12 +118,19 @@ def generate_report(case, *, verify_integrity=True):
         lines += [guidance["text"].replace("\n## ", "\n### ").replace("# 人工操作指南", "## 人工操作指南", 1)]
     report_path = case.directory / "report.md"
     report_path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    report_data = {"case": case.manifest, "evidence": evidence,
+                   "warnings": list(dict.fromkeys(warnings)), "manual_guidance": guidance}
+    json_path = case.directory / "report.json"
+    # Commit the primary diagnostics before an optional duplicate uses disk space.
+    write_json(json_path, report_data)
     try:
         (case.directory / "manual-guide.md").write_text(guidance["text"], encoding="utf-8", newline="\n")
     except OSError as exc:
-        # The main report already contains the instructions. An auxiliary file error
-        # must not hide the intake/analysis failure or prevent the diagnostic report.
         guidance["file_error"] = f"{type(exc).__name__}: {exc}"
-    write_json(case.directory / "report.json", {"case": case.manifest, "evidence": evidence,
-                                                "warnings": list(dict.fromkeys(warnings)), "manual_guidance": guidance})
+        try:
+            write_json(json_path, report_data)
+        except OSError:
+            # The primary JSON is already saved atomically. Failure to add an
+            # auxiliary diagnostic must not turn that success into a report error.
+            pass
     return report_path
