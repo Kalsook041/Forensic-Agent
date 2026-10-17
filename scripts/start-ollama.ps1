@@ -14,7 +14,7 @@ $env:OLLAMA_HOST = '127.0.0.1:11434'
 $env:OLLAMA_NO_CLOUD = '1'
 $env:OLLAMA_NUM_PARALLEL = '1'
 $env:OLLAMA_MAX_LOADED_MODELS = '1'
-$env:OLLAMA_CONTEXT_LENGTH = '4096'
+$env:OLLAMA_CONTEXT_LENGTH = '8192'
 foreach ($name in @('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY')) { [Environment]::SetEnvironmentVariable($name, $null, 'Process') }
 Write-Output '启动仅监听 127.0.0.1 的 Ollama；不下载模型、不修改现有模型目录。'
 $projectRoot = Split-Path -Parent $PSScriptRoot
