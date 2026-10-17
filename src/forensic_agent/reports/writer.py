@@ -54,9 +54,20 @@ def generate_report(case, *, verify_integrity=True):
     case.save()
     guidance = build_manual_guidance(case)
     evidence = [row for step in case.manifest["steps"] for row in step["evidence"]]
-    lines = ["# 取证分析报告", "", f"案件：{inline(case.manifest['case_id'])}", "",
-             f"题目：{inline(case.manifest['question'])}", "",
-             f"状态：{inline(case.manifest['state'])}", "", "## 解题计划", ""]
+    lines = ["# 取证分析报告", "", f"题目：{inline(case.manifest['question'])}", "",
+             "## 答案摘要", ""]
+    if case.manifest.get("answers"):
+        for i, answer in enumerate(case.manifest["answers"], 1):
+            lines += [f"### 答案 {i}", "", code_json(answer["value"]), "",
+                      f"证据引用：{inline(answer['evidence_id'])}；字段：{inline(answer['field'])}。", ""]
+            if answer.get("interpretation"):
+                lines += [f"候选解释（需要人工核对）：{inline(answer['interpretation'])}", ""]
+        lines += ["以上值已通过来源与字段引用校验；是否完整回答题目仍需人工结合证据核对。"]
+    else:
+        lines += ["**尚未得出可验证答案。**",
+                  "没有经引用校验的模型候选答案。下列内容为工具直接输出；不能据此自动确认复杂问题。"]
+    lines += ["", f"案件：{inline(case.manifest['case_id'])}", "",
+              f"状态：{inline(case.manifest['state'])}", "", "## 解题计划", ""]
     lines += [f"{i}. {inline(line)}" for i, line in enumerate(case.manifest.get("plan", []), 1)] or ["直接工具调用。"]
     if case.manifest.get("question_id"):
         lines += ["", "题目记录：", code_json({"question_id": case.manifest["question_id"],
@@ -67,15 +78,7 @@ def generate_report(case, *, verify_integrity=True):
                                     "report_directory": item.get("report_directory")}
                                    for item in case.manifest.get("question_history", [])]}),
             "下列证据库保留全部题目的工具证据；当前候选答案仅针对本页题目。"]
-    lines += ["", "## 候选答案与工具事实", ""]
-    if case.manifest.get("answers"):
-        for answer in case.manifest["answers"]:
-            lines += [f"- 引用 {inline(answer['evidence_id'])} 的字段 {inline(answer['field'])}：",
-                      code_json(answer["value"])]
-            if answer.get("interpretation"):
-                lines += [f"  候选解释（需要人工核对）：{inline(answer['interpretation'])}"]
-    else:
-        lines += ["没有经引用校验的模型候选答案。下列内容为工具直接输出；不能据此自动确认复杂问题。"]
+    lines += ["", "## 校验与历史记录", ""]
     if case.manifest.get("historical_answers"):
         lines += ["", "历史候选（已失效或需要重新核查，不能作为当前答案）：",
                   code_json(case.manifest["historical_answers"])]
