@@ -286,6 +286,13 @@ def rule_request(case):
     root = case.manifest["root_id"]
     if any(word in lowered for word in ("sha256", "哈希", "hash")):
         return ToolRequest(tool_id="hash", source_id=root)
+    for name, tokens in (("pecmd", ("pecmd", "prefetch", "预读取")),
+                         ("mftecmd", ("mftecmd", "$mft")),
+                         ("recmd", ("recmd", "注册表hive", "注册表 hive")),
+                         ("sqlecmd", ("sqlecmd",)), ("autopsy", ("autopsy",)),
+                         ("veracrypt", ("veracrypt",))):
+        if any(token in lowered for token in tokens):
+            return ToolRequest(tool_id=name, source_id=root)
     if any(word in lowered for word in ("sqlite", "数据库", "表结构")):
         return ToolRequest(tool_id="sqlite", source_id=root)
     if any(word in lowered for word in ("元数据", "exif", "作者", "拍摄", "metadata")):

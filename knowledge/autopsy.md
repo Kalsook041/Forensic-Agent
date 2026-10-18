@@ -1,0 +1,6 @@
+# Autopsy
+本版autopsy工具读取已关闭并checkpoint的Autopsy autopsy.db，view=files或attributes。
+它不自动创建Autopsy案件、运行ingest模块或打开原始镜像；原始镜像请人工先使用Autopsy建案分析。
+将关闭后的独立数据库作为检材，记录原镜像摘要、Autopsy版本、模块和导出时间；工具只核验这份数据库。
+WAL或journal伴随文件存在则拒绝，不忽略尚未落盘结果。keyword字面筛选，limit上限，partial不能当完整统计。
+仅关闭软件不一定改变WAL模式；应使用SQLite备份接口/数据库工具导出独立副本，确认副本journal_mode为DELETE。不要删除-wal来绕过检查。

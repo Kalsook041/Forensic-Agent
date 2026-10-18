@@ -1,0 +1,5 @@
+# SQLECmd
+对单个关闭且checkpoint的SQLite应用数据库使用本机安装Maps导出CSV。无sync、自由SQL或外部Maps路径。
+原文件名可能影响映射匹配。无CSV时为unsupported，不是空数据已验证。
+Maps副本和摘要存入步骤目录；映射可能转换日期并使用运行机localtime，应复核映射与时区。
+通用schema/count/rows优先使用sqlite工具；只有应用映射解析需要sqlecmd。

@@ -121,3 +121,12 @@ class EvtxParams(StrictModel):
         if any(x < 0 or x > 65535 for x in value):
             raise ValueError("事件 ID 范围应为 0..65535")
         return value
+
+
+class ArtifactRowsParams(StrictModel):
+    keyword: str = Field(default="", max_length=256)
+    limit: int = Field(default=200, ge=1, le=1000, strict=True)
+
+
+class AutopsyParams(ArtifactRowsParams):
+    view: Literal["files", "attributes"] = "files"

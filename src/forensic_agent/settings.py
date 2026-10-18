@@ -42,6 +42,8 @@ class ToolPaths(StrictModel):
     mftecmd: str = ""
     recmd: str = ""
     sqlecmd: str = ""
+    autopsy: str = ""
+    veracrypt: str = ""
 
     @field_validator("*")
     @classmethod

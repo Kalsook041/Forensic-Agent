@@ -30,7 +30,7 @@ def run_tool(case, request: ToolRequest):
     try:
         adapter, params = validate_request(request)
         sources = case.select(request.source_id)
-        if request.tool_id == "sqlite":
+        if request.tool_id in {"sqlite", "autopsy", "sqlecmd"}:
             sources = case.expand_sqlite_sources(sources)
         reference = None
         if request.tool_id == "evidence_window":
@@ -117,6 +117,8 @@ def run_tool(case, request: ToolRequest):
     step["finished_utc"] = utc_now()
     output_files = [*directory.glob("*.stdout.bin"), *directory.glob("*.stderr.bin")]
     output_files += [directory / "commands.jsonl"] if (directory / "commands.jsonl").is_file() else []
+    if request.tool_id in {"pecmd", "mftecmd", "recmd", "sqlecmd"}:
+        output_files += [p for p in (directory / "export").rglob("*") if p.is_file()]
     output_files += [Path(row["locator"]["json_path"]) for row in step["evidence"] if "json_path" in row["locator"]]
     step["output_hashes"] = {}
     try:

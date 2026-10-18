@@ -19,6 +19,8 @@ pecmd = 'E:\Forensics\EZTools\net9\PECmd.exe'
 mftecmd = 'E:\Forensics\EZTools\net9\MFTECmd.exe'
 recmd = 'E:\Forensics\EZTools\net9\RECmd\RECmd.exe'
 sqlecmd = 'E:\Forensics\EZTools\net9\SQLECmd\SQLECmd.exe'
+autopsy = 'E:\Forensics\Autopsy\4.23.1\bin\autopsy64.exe'
+veracrypt = 'D:\VeraCrypt\VeraCrypt.exe'
 
 [limits]
 timeout_seconds = 60

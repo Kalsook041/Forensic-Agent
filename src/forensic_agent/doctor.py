@@ -15,7 +15,8 @@ VERSION_ARGUMENTS = {"tshark": ["--version"], "capinfos": ["--version"],
                      **{key: ["--version"] for key in ("evtxecmd", "pecmd", "mftecmd", "recmd", "sqlecmd")}}
 COMMAND_NAMES = {"tshark": "tshark.exe", "capinfos": "capinfos.exe", "exiftool": "exiftool.exe",
                  "seven_zip": "7z.exe", "ollama": "ollama.exe", "evtxecmd": "EvtxECmd.exe",
-                 "pecmd": "PECmd.exe", "mftecmd": "MFTECmd.exe", "recmd": "RECmd.exe", "sqlecmd": "SQLECmd.exe"}
+                 "pecmd": "PECmd.exe", "mftecmd": "MFTECmd.exe", "recmd": "RECmd.exe", "sqlecmd": "SQLECmd.exe",
+                 "autopsy": "autopsy64.exe", "veracrypt": "VeraCrypt.exe"}
 
 
 def find_tools(settings):
@@ -25,6 +26,8 @@ def find_tools(settings):
                "seven_zip": ["C:/Program Files/7-Zip/7z.exe"],
                "ollama": [str(Path(os.environ.get("LOCALAPPDATA", "C:/")) / "Programs/Ollama/ollama.exe")]}
     ez_root = Path("E:/Forensics/EZTools/net9")
+    guesses.update({"autopsy": ["E:/Forensics/Autopsy/4.23.1/bin/autopsy64.exe"],
+                    "veracrypt": ["D:/VeraCrypt/VeraCrypt.exe"]})
     guesses.update({"evtxecmd": [str(ez_root / "EvtxeCmd/EvtxECmd.exe")],
                     "pecmd": [str(ez_root / "PECmd.exe")], "mftecmd": [str(ez_root / "MFTECmd.exe")],
                     "recmd": [str(ez_root / "RECmd/RECmd.exe")], "sqlecmd": [str(ez_root / "SQLECmd/SQLECmd.exe")]})
@@ -65,6 +68,11 @@ def inspect_environment(settings):
         for key, path in found.items():
             item = {"configured_path": getattr(settings.tools, key), "detected_path": path, "available": bool(path)}
             if path:
+                if key in {"autopsy", "veracrypt"}:
+                    item.update(executable_sha256=sha256_file(Path(path)),
+                                inspection_only=True, version_output="未启动桌面程序；仅确认入口存在，不代表自动挂载/采集可用")
+                    info["tools"][key] = item
+                    continue
                 try:
                     captured = capture([path, *VERSION_ARGUMENTS[key]], cwd=cwd, env=clean_environment(cwd),
                                        timeout=5, max_output=65536)

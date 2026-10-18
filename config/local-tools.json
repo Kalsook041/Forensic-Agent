@@ -111,7 +111,7 @@
       "executable": "E:\\Forensics\\Autopsy\\4.23.1\\bin\\autopsy64.exe",
       "sha256": "ee790adfcf8436d7b128ddb43d6f6df1a8404df7612972b2bef7022b4f27bf69",
       "source": "https://www.autopsy.com/download/",
-      "agent_adapter": false,
+      "agent_adapter": true,
       "kind": "gui",
       "arguments": [
         "--userdir",
@@ -119,43 +119,57 @@
         "--cachedir",
         "E:\\Forensics\\AutopsyData\\cache",
         "-J-Xmx4g"
-      ]
+      ],
+      "adapter_scope": "closed checkpoint autopsy.db read-only files/attributes; no automatic ingest"
     },
     "pecmd": {
       "version": "2026.5.0",
       "executable": "E:\\Forensics\\EZTools\\net9\\PECmd.exe",
       "sha256": "8ef7357917c363641af503c95ae63cf132a717e0bb86748ae01ee2584c517cbe",
       "source": "https://ericzimmerman.github.io/",
-      "agent_adapter": false,
+      "agent_adapter": true,
       "kind": "cli",
-      "arguments": []
+      "arguments": [],
+      "adapter_scope": "single Prefetch CSV"
     },
     "mftecmd": {
       "version": "2026.5.0",
       "executable": "E:\\Forensics\\EZTools\\net9\\MFTECmd.exe",
       "sha256": "2f0251ff15e5c3559967523661e2bb77dc4a1cbc7ae56aa146c9c65270a517f6",
       "source": "https://ericzimmerman.github.io/",
-      "agent_adapter": false,
+      "agent_adapter": true,
       "kind": "cli",
-      "arguments": []
+      "arguments": [],
+      "adapter_scope": "single MFT CSV only"
     },
     "recmd": {
       "version": "2026.5.0",
       "executable": "E:\\Forensics\\EZTools\\net9\\RECmd\\RECmd.exe",
       "sha256": "89b1ff3ad30d79bf919f5bfefa755b25cc067815e8e11052c2d52392122c0387",
       "source": "https://ericzimmerman.github.io/",
-      "agent_adapter": false,
+      "agent_adapter": true,
       "kind": "cli",
-      "arguments": []
+      "arguments": [],
+      "adapter_scope": "clean hive BasicSystemInfo only"
     },
     "sqlecmd": {
       "version": "2026.5.0",
       "executable": "E:\\Forensics\\EZTools\\net9\\SQLECmd\\SQLECmd.exe",
       "sha256": "e968f16258a073a6cde36041b828d5c798eba6eef8656e3ed851a60deca51696",
       "source": "https://ericzimmerman.github.io/",
-      "agent_adapter": false,
+      "agent_adapter": true,
       "kind": "cli",
-      "arguments": []
+      "arguments": [],
+      "adapter_scope": "checkpoint SQLite using installed Maps"
+    },
+    "veracrypt": {
+      "executable": "D:\\VeraCrypt\\VeraCrypt.exe",
+      "version": "1.26.29",
+      "sha256": "7dddcb58a9db6652ee6f1821ad3224b655942145795e2fd309b83230f1ec2862",
+      "agent_adapter": false,
+      "adapter_scope": "operator read-only handoff only; no automatic mount",
+      "kind": "gui",
+      "source": "https://veracrypt.io/"
     }
   },
   "symbols": {

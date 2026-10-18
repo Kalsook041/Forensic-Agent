@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import basic, archives, structured
+from . import windows_artifacts, desktop
+from .params import ArtifactRowsParams, AutopsyParams
 from .params import (ArchiveParams, EmptyParams, EvidenceWindowParams, EvtxParams, InventoryParams,
                      MetadataParams, ModelSQLiteParams, PcapParams, SearchParams, SQLiteParams)
 
@@ -16,6 +18,12 @@ class Adapter:
 
 
 REGISTRY = {
+    "pecmd": Adapter("Prefetch程序执行痕迹CSV导出；仅单个PF文件", ArtifactRowsParams, windows_artifacts.prefetch, "pecmd"),
+    "mftecmd": Adapter("单个NTFS $MFT文件记录与时间；不解析整个镜像", ArtifactRowsParams, windows_artifacts.mft, "mftecmd"),
+    "recmd": Adapter("单个注册表hive的BasicSystemInfo固定批次；计算机名/系统信息", ArtifactRowsParams, windows_artifacts.registry, "recmd"),
+    "sqlecmd": Adapter("单个SQLite的本机Maps解析；无自由SQL或同步下载", ArtifactRowsParams, windows_artifacts.sqlite_maps, "sqlecmd"),
+    "autopsy": Adapter("只读查询已关闭且checkpoint的Autopsy案件数据库；files/attributes；不自动镜像采集", AutopsyParams, desktop.autopsy),
+    "veracrypt": Adapter("已确认格式容器的人工只读打开指南；不自动解密/挂载，结果不能引用为答案", EmptyParams, desktop.veracrypt, "veracrypt"),
     "inventory": Adapter("目录检索、文件类型和来源清单", InventoryParams, basic.inventory),
     "hash": Adapter("SHA256 与大小", EmptyParams, basic.hashes),
     "search": Adapter("文本字面量关键词和编码检查", SearchParams, basic.search),
