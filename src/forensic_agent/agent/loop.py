@@ -9,6 +9,7 @@ from ..tools.registry import catalog, validate_request
 from ..tools.runner import run_tool
 from .ollama import OllamaClient
 from .guidance import GUIDANCE_VERSION, TASK_GUIDANCE
+from ..reports.live import publish_section, publish_tool, review_text
 
 
 CONTINUABLE_STATES = {"ready", "completed", "completed_without_model", "insufficient_evidence",
@@ -314,6 +315,8 @@ def analyze(case, *, no_model=False, client=None, progress=None):
         "start_step_count": len(case.manifest["steps"]),
         "tool_limit": len(case.manifest["steps"]) + case.settings.model.max_steps})
     case.save()
+    publish_section(case, "start", "分析已开始",
+                    "题目：" + case.manifest["question"] + "\n检材登记已完成；正在准备审题与分析。", progress)
     if no_model:
         request = rule_request(case)
         if request_signature(request) in existing_request_signatures(case):
@@ -336,7 +339,11 @@ def analyze(case, *, no_model=False, client=None, progress=None):
         case.manifest["warnings"].append("本次为显式无模型规则模式，未使用语言模型规划；不自动推断复杂答案")
         if progress:
             progress(case.manifest["plan"][0])
+        publish_section(case, f"step{len(case.manifest['steps']) + 1:04d}", "工具执行中",
+                        json.dumps(request.model_dump(mode="json"), ensure_ascii=False, indent=2), progress,
+                        status="执行中 · 尚无结果")
         step = run_tool(case, request)
+        publish_tool(case, step, progress)
         if case.manifest["state"] != "evidence_changed":
             case.manifest["state"] = "completed_without_model" if step["result"]["status"] in {"ok", "partial"} else "tool_failed"
         case.save()
@@ -424,7 +431,14 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                 run["task_review"] = decision.task_review.model_dump(mode="json")
                 run["guidance_version"] = GUIDANCE_VERSION
                 run["reviewed_utc"] = utc_now()
+                run["plan"] = list(decision.plan)
                 case.save()
+                publish_section(case, "review", "审题与证据标准", review_text(run["task_review"]), progress,
+                                status="模型审题 · 待人工核对")
+                publish_section(case, "plan", "详细分析计划",
+                                "\n".join(f"{i}. {line}" for i, line in enumerate(decision.plan, 1))
+                                or "模型明确结束，未提出可执行工具步骤。", progress,
+                                status="计划 · 尚未执行")
                 if progress:
                     progress("审题目标：" + "；".join(decision.task_review.targets))
                     progress("审题范围：" + decision.task_review.scope)
@@ -529,9 +543,13 @@ def analyze(case, *, no_model=False, client=None, progress=None):
                     review["status"] = "validated" if answers else "insufficient_evidence"
                 break
             seen.add(signature)
+            publish_section(case, f"step{len(case.manifest['steps']) + 1:04d}", "工具执行中",
+                            json.dumps(request.model_dump(mode="json"), ensure_ascii=False, indent=2), progress,
+                            status="执行中 · 尚无结果")
             if progress:
                 progress(f"执行 {request.tool_id}，来源 {request.source_id}")
             step = run_tool(case, request)
+            publish_tool(case, step, progress)
             new = {json.dumps({"source": x["source_id"], "locator": x["locator"], "data": x["data"]},
                               ensure_ascii=False, sort_keys=True) for x in step["evidence"]}
             stagnant = 0 if new - evidence_seen else stagnant + 1
@@ -548,6 +566,13 @@ def analyze(case, *, no_model=False, client=None, progress=None):
         case.manifest["state"] = "model_unavailable"
         case.manifest["warnings"].append(f"模型不可用：{type(exc).__name__}: {exc}；可使用 tool 或 analyze --no-model")
     finally:
+        publish_section(case, "outcome", "分析阶段结束",
+                        f"分析状态：{case.manifest['state']}\n"
+                        "最终报告仍需完整性及引用复核；此前阶段内容不能替代最终结论。\n"
+                        "候选答案（仅为当前校验结果，完整性变化时会失效）：\n" +
+                        json.dumps(case.manifest.get("answers", []) if case.manifest["state"] == "completed" else [],
+                                   ensure_ascii=False, indent=2), progress,
+                        status="等待最终报告")
         review = case.manifest["analysis_runs"][-1].get("final_review")
         if review:
             if review["status"] in {"started", "responded"}:

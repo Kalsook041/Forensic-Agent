@@ -77,6 +77,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
           <p>开始分析后，这里会显示进度与报告。</p>
         </div>
         <div id="running-state" class="running-state" hidden><span class="spinner" aria-hidden="true"></span><div><h3>正在处理检材</h3><p>页面会自动更新。复制大文件或等待本地模型时可能需要较长时间。</p></div></div>
+        <section id="live-report" class="live-report" aria-label="阶段报告" hidden>
+          <h3>阶段报告 · 边分析边更新</h3>
+          <p id="live-status" class="help" role="status">中间内容待核验，不能替代最终答案。</p>
+          <div id="live-sections"></div>
+        </section>
         <p id="report-meta" class="report-meta" hidden></p>
         <article id="report" class="report" aria-label="取证报告" hidden></article>
         <pre id="diagnostics" class="diagnostics" hidden></pre>

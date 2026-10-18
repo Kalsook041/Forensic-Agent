@@ -120,6 +120,11 @@ summary { cursor:pointer; font-size:13px; font-weight:600; }
 #notice,#connection-notice { background:#fff0f1; color:#922033; padding:12px 16px; border-radius:7px; margin-bottom:18px; font-size:13px; }
 #notice.info { background:var(--accent-tint); color:#354496; }
 .task-controls { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px; }
+.live-report { border:1px solid var(--line); border-radius:8px; padding:16px; margin:16px 0; }
+.live-report h3 { margin:0 0 8px; }
+.live-section { border-top:1px solid var(--line); padding-top:12px; margin-top:12px; }
+.live-section h4 { margin:0 0 6px; }
+.live-section pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.65; margin:8px 0; max-height:420px; overflow:auto; }
 #cancel-task { border-color:#b63849; color:#a52a3b; }
 .status.cancelled,.status.cancelling { background:#fff2d8; color:#795012; }
 footer { display:flex; justify-content:space-between; gap:15px; font-size:11px; color:var(--muted); margin-top:18px; }

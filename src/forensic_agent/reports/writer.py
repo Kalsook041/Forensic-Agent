@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from ..evidence.store import write_json
 from ..manual import build_manual_guidance
+from .live import review_text
 
 
 def inline(value):
@@ -72,8 +73,12 @@ def generate_report(case, *, verify_integrity=True):
             if run.get("question_id", "q0001") == case.manifest.get("question_id", "q0001")
             and run.get("task_review")]
     if runs:
-        lines += ["审题摘要（模型对题意的理解，需结合题目核对）：", code_json(runs[-1]["task_review"]), ""]
-    lines += [f"{i}. {inline(line)}" for i, line in enumerate(case.manifest.get("plan", []), 1)] or ["直接工具调用。"]
+        lines += ["### 审题摘要与证据标准", "", "以下为模型对题意的理解，需结合题目核对：", ""]
+        lines += [inline(line) + "  " for line in review_text(runs[-1]["task_review"]).splitlines()]
+        lines += ["", "### 分步操作计划", ""]
+    plan = runs[-1].get("plan", case.manifest.get("plan", [])) if runs else case.manifest.get("plan", [])
+    lines += [f"{i}. {inline(line)}" for i, line in enumerate(plan, 1)] or [
+        "未提出可执行工具计划；请核对缺失条件与停止说明。" if runs else "直接工具调用。"]
     if case.manifest.get("question_id"):
         lines += ["", "题目记录：", code_json({"question_id": case.manifest["question_id"],
             "new_step_ids": [step["id"] for step in case.manifest["steps"]

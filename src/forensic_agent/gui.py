@@ -170,7 +170,8 @@ class Workspace:
                 raise BusyError("已有任务正在执行，请等待完成后再开始")
             self.task = {"id": secrets.token_hex(8), "action": data["action"], "status": "running",
                          "started": datetime.now().astimezone().isoformat(), "logs": deque(maxlen=160),
-                         "result": None, "case": None, "error": None, "cancel_requested": False}
+                         "result": None, "case": None, "error": None, "cancel_requested": False,
+                         "report_sections": []}
             if data["action"] in {"continue", "new_question", "report"}:
                 self.task["case"] = data["case"]
                 self.task["prior_analysis_runs"] = prior_runs
@@ -186,7 +187,8 @@ class Workspace:
 
     def snapshot(self):
         with self.lock:
-            return {**self.task, "logs": list(self.task["logs"])} if self.task else None
+            return {**self.task, "logs": list(self.task["logs"]),
+                    "report_sections": [dict(item) for item in self.task.get("report_sections", [])]} if self.task else None
 
     def cancel(self, identity):
         with self.lock:
@@ -220,6 +222,22 @@ class Workspace:
                     if isinstance(copied, int) and copied:
                         text += f"；已复制 {copied:,} 字节"
                 self.task["logs"].append(text)
+                section = value.get("report_section")
+                if not section and isinstance(event, dict) and event.get("type") == "phase_progress":
+                    stage = str(event.get("stage", ""))
+                    label = {"copy_snapshot": "创建工作副本", "verify_originals": "核验原件",
+                             "tool_verify_before": "核验工具输入", "tool_execute": "执行分析工具"}.get(
+                                 stage, "完整性核验" if stage.startswith("integrity_") else "处理检材")
+                    section = {"id": "phase", "title": "登记与执行进度", "status": "阶段进度 · 非最终结论",
+                               "question_id": "当前任务", "text": f"当前阶段：{label}\n{text}"}
+                if isinstance(section, dict) and all(isinstance(section.get(key), str)
+                                                    for key in ("id", "title", "text", "status", "question_id")):
+                    sections = self.task.setdefault("report_sections", [])
+                    item = {key: section[key][:10000 if key == "text" else 200]
+                            for key in ("id", "title", "text", "status", "question_id")}
+                    sections[:] = [old for old in sections if old["id"] != item["id"]]
+                    sections.append(item)
+                    del sections[:-64]
             else:
                 self.task["result"] = value
                 if value.get("case"):

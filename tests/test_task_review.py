@@ -45,7 +45,7 @@ def test_review_saved_before_tool_and_reused_in_context_report(evidence, setting
     def checked(case, request):
         assert case.manifest["analysis_runs"][-1]["task_review"] == review().model_dump()
         disk = json.loads((case.directory / "case.json").read_text(encoding="utf-8"))
-        assert disk["analysis_runs"][-1]["guidance_version"] == "task-review-v2"
+        assert disk["analysis_runs"][-1]["guidance_version"] == "task-review-v3"
         return original(case, request)
 
     monkeypatch.setattr(loop, "run_tool", checked)

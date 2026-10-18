@@ -6,6 +6,19 @@ import test from 'node:test';
 const clientCode = await readFile(new URL('../src/forensic_agent/web/app.js', import.meta.url), 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
+test('stage report renders safe text before completion and clears for a new task', async () => {
+  const {node,context} = await readyClient();
+  await vm.runInContext('renderTask({id:"stream",status:"running",logs:[],report_sections:[{id:"review",title:"审题",status:"待核对",question_id:"q0001",text:"<img src=x onerror=alert(1)>"}]})', context);
+  assert.equal(node('live-report').hidden, false);
+  assert.equal(node('created-pre').textContent, '<img src=x onerror=alert(1)>');
+  assert.match(node('live-status').textContent, /待核验/);
+  assert.equal(node('report').hidden, true);
+  await vm.runInContext('renderTask({id:"stream",status:"cancelling",logs:[],report_sections:[{id:"review",title:"审题",status:"待核对",question_id:"q0001",text:"已完成审题"}]})', context);
+  assert.equal(node('live-report').hidden, false);
+  await vm.runInContext('renderTask({id:"next",status:"running",logs:[],report_sections:[]})', context);
+  assert.equal(node('live-report').hidden, true);
+});
+
 test('cancel remains available while inputs are disabled and sends only the current task ID', async () => {
   const {node,context} = await readyClient();
   await vm.runInContext('renderTask({id:"active",status:"running",logs:[]})', context);

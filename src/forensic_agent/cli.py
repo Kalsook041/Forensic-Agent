@@ -57,6 +57,9 @@ def main(argv=None):
 
         def progress(value):
             if isinstance(value, dict):
+                if value.get("type") == "report_section":
+                    display({"progress": value["title"], "report_section": value})
+                    return
                 event = value.get("event", "progress")
                 stage = value.get("stage", "处理")
                 elapsed = value.get("elapsed_seconds")
@@ -123,6 +126,10 @@ def main(argv=None):
             lock_case(case)
         analyze(case, no_model=args.no_model, progress=progress if args.progress else None)
         report_path = generate_report(case)
+        from .reports.live import publish_section
+        publish_section(case, "report", "最终报告已生成",
+                        f"最终状态：{case.manifest['state']}\n报告已保存，答案与限制以最终报告为准。",
+                        progress if args.progress else None, status="报告已生成")
         display({"case": str(case.directory), "state": case.manifest["state"], "reused": bool(args.case),
                  "question_id": case.manifest.get("question_id", "q0001"),
                  "continued": bool(args.case),

@@ -4,6 +4,7 @@ const token = document.querySelector('meta[name="session-token"]').content;
 let tools = {}, currentCase = null, currentReport = "", modelName = "本地模型", maxQuestion = 1000;
 let busy = false, finishedTask = null, polling = false, stopped = false;
 let activeTaskId = null;
+let liveTaskId = null, liveSignature = "";
 let manualText = "", manualCase = null, manualRequest = 0, reportRequest = 0;
 let nextQuestionCase = null;
 const names = {inventory:"文件清单与类型",hash:"SHA256 哈希",search:"文本搜索",metadata:"文件元数据",archive:"压缩包",pcap:"网络流量",sqlite:"SQLite 数据库",evtx:"Windows 事件日志",evtxecmd:"EZTools 事件日志"};
@@ -162,6 +163,24 @@ async function renderTask(task) {
   $("logs").replaceChildren(); for (const line of task.logs) { const li = document.createElement("li"); li.textContent = line; $("logs").append(li); }
   $("log-count").textContent = `${task.logs.length} 条记录`;
   $("running-state").hidden = !running;
+  const sections = task.report_sections || [];
+  const signature = JSON.stringify(sections);
+  if (liveTaskId !== task.id || signature !== liveSignature) {
+    liveTaskId = task.id; liveSignature = signature;
+    $("live-sections").replaceChildren();
+    for (const section of sections) {
+      const block = document.createElement("section"), heading = document.createElement("h4");
+      const status = document.createElement("p"), content = document.createElement("pre");
+      block.className = "live-section"; heading.textContent = section.title;
+      status.className = "help"; status.textContent = `${section.question_id} · ${section.status}`;
+      content.textContent = section.text; block.append(heading, status, content); $("live-sections").append(block);
+    }
+  }
+  $("live-report").hidden = !sections.length;
+  $("live-status").textContent = running ? "阶段内容仍待核验；工具输出不是最终答案，页面约每秒更新。" :
+    task.status === "cancelled" ? "任务已中止。以下保留已收到的阶段内容，未完成最终核验，不是最终答案。" :
+    task.status === "failed" || task.result?.state === "evidence_changed" ? "本次未正常完成或完整性未通过；阶段内容仅供诊断，以最终报告的限制为准。" :
+    "阶段记录已保留，最终答案和限制以下方完整报告为准。";
   if (running || finishedTask === task.id) return;
   finishedTask = task.id;
   if (task.error) notice(task.error);
@@ -186,6 +205,7 @@ async function start(data) {
     const result = await api("/api/start", data);
     $("next-question-panel").hidden = true; nextQuestionCase = null;
     currentCase = null; currentReport = ""; $("report-actions").hidden = true; $("report").hidden = true; $("report-meta").hidden = true; $("diagnostics").hidden = true; $("empty-state").hidden = true;
+    $("live-report").hidden = true; $("live-sections").replaceChildren(); liveTaskId = null; liveSignature = "";
     ++manualRequest; ++reportRequest; manualText = ""; manualCase = null; $("manual-panel").hidden = true; $("manual-download").disabled = true;
     $("output-title").textContent = data.action === "doctor" ? "环境检查" : data.action === "continue" ? "继续案件" : data.action === "new_question" ? "分析新题" : "分析结果";
     $("progress-panel").open = true;
